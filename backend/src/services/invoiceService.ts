@@ -1,21 +1,65 @@
+import PDFDocument from 'pdfkit';
+import fs from 'fs';
+import path from 'path';
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
-import PDFDocument from 'pdfkit';
-import { Response } from 'express';
 
 /**
- * Generate invoice data for an order
+ * Invoice Service
+ * Handles invoice generation and storage
  */
-export const generateInvoice = async (orderId: string, userId?: string) => {
-  // Get order with all details
+
+const INVOICES_DIR = path.join(__dirname, '../../uploads/invoices');
+
+// Ensure invoices directory exists
+if (!fs.existsSync(INVOICES_DIR)) {
+  fs.mkdirSync(INVOICES_DIR, { recursive: true });
+}
+
+/**
+ * Generate invoice number
+ * Format: INV-YYYY-XXXX (e.g., INV-2026-0001)
+ */
+const generateInvoiceNumber = async (): Promise<string> => {
+  const year = new Date().getFullYear();
+  
+  // Count invoices created this year
+  const count = await prisma.order.count({
+    where: {
+      createdAt: {
+        gte: new Date(`${year}-01-01`),
+        lt: new Date(`${year + 1}-01-01`),
+      },
+    },
+  });
+  
+  const sequence = String(count + 1).padStart(4, '0');
+  return `INV-${year}-${sequence}`;
+};
+
+/**
+ * Format currency
+ */
+const formatCurrency = (amount: number): string => {
+  return `₹${amount.toFixed(2)}`;
+};
+
+/**
+ * Generate PDF invoice for an order
+ */
+export const generateInvoice = async (
+  orderId: string,
+  userId?: string
+): Promise<{ filename: string; filepath: string }> => {
+  // Fetch order with all relations
   const order = await prisma.order.findUnique({
     where: { id: orderId },
     include: {
       user: {
         select: {
           id: true,
-          email: true,
           fullName: true,
+          email: true,
           phone: true,
         },
       },
@@ -25,12 +69,7 @@ export const generateInvoice = async (orderId: string, userId?: string) => {
             select: {
               id: true,
               name: true,
-              slug: true,
-              category: {
-                select: {
-                  name: true,
-                },
-              },
+              price: true,
             },
           },
         },
@@ -42,269 +81,227 @@ export const generateInvoice = async (orderId: string, userId?: string) => {
     throw new AppError('Order not found', 404);
   }
 
-  // Verify user access (if userId provided)
+  // Authorization check
   if (userId && order.userId !== userId) {
-    throw new AppError('Unauthorized to access this invoice', 403);
+    throw new AppError('You are not authorized to access this invoice', 403);
   }
 
-  // Calculate subtotal
+  // Calculate invoice details
   const subtotal = order.items.reduce(
     (sum, item) => sum + item.price * item.quantity,
     0
   );
 
-  // Parse coupon data if exists
-  let discount = 0;
-  let couponCode = null;
-  if (order.coupon && typeof order.coupon === 'object') {
-    const couponData = order.coupon as any;
-    couponCode = couponData.code || null;
-    discount = couponData.discount || 0;
-  }
+  const couponDiscount =
+    order.coupon && typeof order.coupon === 'object' && 'discount' in order.coupon
+      ? (order.coupon as any).discount
+      : 0;
 
-  // ✅ FIXED: Implement shipping calculation
-  // Free shipping above ₹5000, otherwise ₹200
-  const shippingCharges = subtotal >= 5000 ? 0 : 200;
-  
-  // ✅ FIXED: Implement tax calculation
-  // 18% GST on subtotal (after discount)
-  const taxableAmount = subtotal - discount;
-  const tax = Math.round(taxableAmount * 0.18 * 100) / 100; // 18% GST
-  
+  const tax = Math.round(((subtotal - couponDiscount) * 0.18) * 100) / 100;
+  const shipping = subtotal >= 5000 ? 0 : 200;
   const total = order.total;
 
-  // Generate order number from ID (simplified version)
-  const orderNumber = `ORD-${order.id.substring(0, 8).toUpperCase()}`;
+  // Generate invoice number
+  const invoiceNumber = await generateInvoiceNumber();
 
-  // Build invoice data
-  const invoice = {
-    invoiceNumber: `INV-${orderNumber}`,
-    orderNumber: orderNumber,
-    orderId: order.id,
-    invoiceDate: new Date().toISOString(),
-    orderDate: order.createdAt.toISOString(),
-    
-    // Customer details
-    customer: {
-      name: order.user.fullName,
-      email: order.user.email,
-      phone: order.user.phone || 'N/A',
-    },
-    
-    // Note: Addresses are not stored in Order model in current schema
-    // They would need to be added to Order model or fetched from user's saved addresses
-    billingAddress: null,
-    shippingAddress: null,
-    
-    // Order items
-    items: order.items.map((item) => ({
-      productId: item.productId,
-      name: item.product.name,
-      category: item.product.category?.name || 'Uncategorized',
-      quantity: item.quantity,
-      unitPrice: item.price,
-      total: item.price * item.quantity,
-    })),
-    
-    // Payment details (payment info not in current Order model)
-    paymentMethod: 'N/A', // Would need to be added to Order model
-    paymentStatus: 'Completed', // Assumption based on order being created
-    
-    // Price breakdown
-    pricing: {
-      subtotal,
-      discount,
-      couponCode,
-      shippingCharges,
-      tax,
-      total,
-    },
-    
-    // Additional info
-    status: order.status,
-    notes: null, // Notes field not in current Order model
-  };
+  // Create PDF
+  const doc = new PDFDocument({ margin: 50, size: 'A4' });
 
-  return invoice;
-};
+  const filename = `${invoiceNumber}.pdf`;
+  const filepath = path.join(INVOICES_DIR, filename);
 
-/**
- * Get invoice as JSON
- */
-export const getInvoiceJSON = async (orderId: string, userId?: string) => {
-  return await generateInvoice(orderId, userId);
-};
+  const stream = fs.createWriteStream(filepath);
+  doc.pipe(stream);
 
-/**
- * Generate and stream PDF invoice
- * ✅ FIXED: Proper PDF generation implementation
- */
-export const getInvoicePDF = async (
-  orderId: string, 
-  userId: string | undefined, 
-  res: Response
-) => {
-  const invoice = await generateInvoice(orderId, userId);
-  
-  // Create PDF document
-  const doc = new PDFDocument({ 
-    size: 'A4',
-    margin: 50,
-  });
-
-  // Set response headers for PDF download
-  res.setHeader('Content-Type', 'application/pdf');
-  res.setHeader(
-    'Content-Disposition', 
-    `attachment; filename=invoice-${invoice.invoiceNumber}.pdf`
-  );
-
-  // Pipe PDF to response
-  doc.pipe(res);
-
-  // --- HEADER ---
+  // Header
   doc
-    .fontSize(24)
-    .fillColor('#10b981')
-    .text('AGROMART', 50, 50)
-    .fontSize(10)
-    .fillColor('#6b7280')
-    .text('Agricultural Supplies & Equipment', 50, 80)
-    .text('support@agromart.com | +91-1234567890', 50, 95);
+    .fontSize(28)
+    .font('Helvetica-Bold')
+    .text('INVOICE', 50, 50, { align: 'left' });
 
-  // Invoice title and number
   doc
-    .fontSize(20)
-    .fillColor('#111827')
-    .text('INVOICE', 400, 50, { align: 'right' })
     .fontSize(10)
-    .fillColor('#6b7280')
-    .text(invoice.invoiceNumber, 400, 75, { align: 'right' })
-    .text(
-      `Date: ${new Date(invoice.invoiceDate).toLocaleDateString()}`, 
-      400, 
-      90, 
-      { align: 'right' }
-    );
+    .font('Helvetica')
+    .text(`Invoice Number: ${invoiceNumber}`, 50, 90)
+    .text(`Order ID: ${order.id}`, 50, 105)
+    .text(`Date: ${new Date(order.createdAt).toLocaleDateString('en-IN')}`, 50, 120)
+    .text(`Status: ${order.status.toUpperCase()}`, 50, 135);
 
-  // --- CUSTOMER DETAILS ---
+  // Company Info (Seller)
   doc
     .fontSize(12)
-    .fillColor('#111827')
-    .text('Bill To:', 50, 140)
-    .fontSize(10)
-    .fillColor('#374151')
-    .text(invoice.customer.name, 50, 160)
-    .text(invoice.customer.email, 50, 175)
-    .text(invoice.customer.phone, 50, 190);
+    .font('Helvetica-Bold')
+    .text('FROM:', 50, 170);
 
-  // Order details
   doc
     .fontSize(10)
-    .fillColor('#6b7280')
-    .text(`Order: ${invoice.orderNumber}`, 400, 140, { align: 'right' })
-    .text(`Status: ${invoice.status.toUpperCase()}`, 400, 155, { align: 'right' });
+    .font('Helvetica')
+    .text('AgroMart', 50, 190)
+    .text('Agricultural Market Complex', 50, 205)
+    .text('India', 50, 220)
+    .text('Email: support@agromart.com', 50, 235)
+    .text('Phone: +91-1234567890', 50, 250);
 
-  // --- LINE ITEMS TABLE ---
-  let yPosition = 240;
+  // Customer Info (Buyer)
+  doc
+    .fontSize(12)
+    .font('Helvetica-Bold')
+    .text('TO:', 350, 170);
 
-  // Table header
   doc
     .fontSize(10)
-    .fillColor('#ffffff')
-    .rect(50, yPosition, 495, 25)
-    .fill('#10b981')
-    .fillColor('#ffffff')
-    .text('Item', 60, yPosition + 8)
-    .text('Qty', 320, yPosition + 8)
-    .text('Price', 380, yPosition + 8)
-    .text('Total', 470, yPosition + 8, { align: 'right' });
+    .font('Helvetica')
+    .text(order.user.fullName, 350, 190)
+    .text(order.user.email, 350, 205)
+    .text(order.user.phone || 'N/A', 350, 220);
 
-  yPosition += 25;
+  // Line separator
+  doc
+    .strokeColor('#cccccc')
+    .lineWidth(1)
+    .moveTo(50, 280)
+    .lineTo(550, 280)
+    .stroke();
 
-  // Table rows
-  doc.fillColor('#374151');
-  invoice.items.forEach((item, index) => {
-    const bgColor = index % 2 === 0 ? '#f9fafb' : '#ffffff';
-    
+  // Table Header
+  const tableTop = 300;
+  doc
+    .fontSize(10)
+    .font('Helvetica-Bold')
+    .text('ITEM', 50, tableTop)
+    .text('QUANTITY', 300, tableTop, { width: 80, align: 'center' })
+    .text('PRICE', 380, tableTop, { width: 80, align: 'right' })
+    .text('TOTAL', 460, tableTop, { width: 90, align: 'right' });
+
+  // Table line
+  doc
+    .strokeColor('#cccccc')
+    .lineWidth(1)
+    .moveTo(50, tableTop + 15)
+    .lineTo(550, tableTop + 15)
+    .stroke();
+
+  // Table Items
+  let yPosition = tableTop + 30;
+  doc.font('Helvetica').fontSize(9);
+
+  for (const item of order.items) {
+    const itemTotal = item.price * item.quantity;
+
     doc
-      .rect(50, yPosition, 495, 30)
-      .fill(bgColor)
-      .fillColor('#374151')
-      .fontSize(9)
-      .text(item.name, 60, yPosition + 10, { width: 250 })
-      .text(item.quantity.toString(), 320, yPosition + 10)
-      .text(`₹${item.unitPrice.toFixed(2)}`, 380, yPosition + 10)
-      .text(`₹${item.total.toFixed(2)}`, 470, yPosition + 10, { align: 'right' });
-    
-    yPosition += 30;
-  });
+      .text(item.product.name, 50, yPosition, { width: 230 })
+      .text(String(item.quantity), 300, yPosition, { width: 80, align: 'center' })
+      .text(formatCurrency(item.price), 380, yPosition, { width: 80, align: 'right' })
+      .text(formatCurrency(itemTotal), 460, yPosition, { width: 90, align: 'right' });
 
-  // --- TOTALS SECTION ---
+    yPosition += 25;
+  }
+
+  // Summary section
+  yPosition += 20;
+  doc
+    .strokeColor('#cccccc')
+    .lineWidth(1)
+    .moveTo(350, yPosition)
+    .lineTo(550, yPosition)
+    .stroke();
+
   yPosition += 20;
 
-  const totalsX = 350;
-  const valuesX = 480;
-
   doc
     .fontSize(10)
-    .fillColor('#6b7280')
-    .text('Subtotal:', totalsX, yPosition)
-    .text(`₹${invoice.pricing.subtotal.toFixed(2)}`, valuesX, yPosition, { align: 'right' });
+    .font('Helvetica')
+    .text('Subtotal:', 350, yPosition)
+    .text(formatCurrency(subtotal), 460, yPosition, { width: 90, align: 'right' });
 
   yPosition += 20;
 
-  if (invoice.pricing.discount > 0) {
+  if (couponDiscount > 0) {
     doc
-      .text(`Discount${invoice.pricing.couponCode ? ` (${invoice.pricing.couponCode})` : ''}:`, totalsX, yPosition)
-      .text(`-₹${invoice.pricing.discount.toFixed(2)}`, valuesX, yPosition, { align: 'right' });
+      .text('Discount:', 350, yPosition)
+      .text(`-${formatCurrency(couponDiscount)}`, 460, yPosition, { width: 90, align: 'right' });
     yPosition += 20;
   }
 
   doc
-    .text('Tax (18% GST):', totalsX, yPosition)
-    .text(`₹${invoice.pricing.tax.toFixed(2)}`, valuesX, yPosition, { align: 'right' });
+    .text('Tax (GST 18%):', 350, yPosition)
+    .text(formatCurrency(tax), 460, yPosition, { width: 90, align: 'right' });
 
   yPosition += 20;
 
   doc
-    .text('Shipping:', totalsX, yPosition)
-    .text(
-      invoice.pricing.shippingCharges === 0 ? 'FREE' : `₹${invoice.pricing.shippingCharges.toFixed(2)}`, 
-      valuesX, 
-      yPosition, 
-      { align: 'right' }
-    );
+    .text('Shipping:', 350, yPosition)
+    .text(shipping === 0 ? 'FREE' : formatCurrency(shipping), 460, yPosition, { width: 90, align: 'right' });
 
   yPosition += 20;
 
-  // Total line
   doc
-    .strokeColor('#10b981')
-    .lineWidth(1)
+    .strokeColor('#000000')
+    .lineWidth(2)
     .moveTo(350, yPosition)
-    .lineTo(545, yPosition)
+    .lineTo(550, yPosition)
     .stroke();
 
-  yPosition += 10;
+  yPosition += 20;
 
   doc
     .fontSize(12)
-    .fillColor('#111827')
-    .text('Total:', totalsX, yPosition)
-    .text(`₹${invoice.pricing.total.toFixed(2)}`, valuesX, yPosition, { align: 'right' });
+    .font('Helvetica-Bold')
+    .text('TOTAL:', 350, yPosition)
+    .text(formatCurrency(total), 460, yPosition, { width: 90, align: 'right' });
 
-  // --- FOOTER ---
+  // Footer
   doc
     .fontSize(8)
-    .fillColor('#9ca3af')
+    .font('Helvetica')
     .text(
-      'Thank you for your business! For support, contact support@agromart.com',
+      'Thank you for your business!',
       50,
-      750,
-      { align: 'center', width: 495 }
+      700,
+      { align: 'center', width: 500 }
+    );
+
+  doc
+    .fontSize(7)
+    .text(
+      'This is a computer-generated invoice and does not require a signature.',
+      50,
+      720,
+      { align: 'center', width: 500 }
     );
 
   // Finalize PDF
   doc.end();
+
+  // Wait for stream to finish
+  await new Promise<void>((resolve, reject) => {
+    stream.on('finish', () => resolve());
+    stream.on('error', (err) => reject(err));
+  });
+
+  return { filename, filepath };
+};
+
+/**
+ * Get invoice file path
+ */
+export const getInvoiceFilePath = (filename: string): string => {
+  const filepath = path.join(INVOICES_DIR, filename);
+  
+  if (!fs.existsSync(filepath)) {
+    throw new AppError('Invoice file not found', 404);
+  }
+  
+  return filepath;
+};
+
+/**
+ * Delete invoice file
+ */
+export const deleteInvoice = (filename: string): void => {
+  const filepath = path.join(INVOICES_DIR, filename);
+  
+  if (fs.existsSync(filepath)) {
+    fs.unlinkSync(filepath);
+  }
 };

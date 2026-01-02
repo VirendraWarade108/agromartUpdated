@@ -1,39 +1,147 @@
-import { Request, Response } from 'express';
-import { asyncHandler } from '../middleware/errorHandler';
+import { Request, Response, NextFunction } from 'express';
 import * as invoiceService from '../services/invoiceService';
+import { AppError } from '../middleware/errorHandler';
+import { asyncHandler } from '../middleware/errorHandler';
 
 /**
- * Get order invoice as JSON
- * GET /api/orders/:id/invoice
+ * Invoice Controller
+ * Handles HTTP requests for invoice operations
  */
-export const getOrderInvoice = asyncHandler(
-  async (req: Request, res: Response) => {
-    const userId = req.userId!;
-    const { id } = req.params;
 
-    const invoice = await invoiceService.getInvoiceJSON(id, userId);
+/**
+ * Generate and download invoice for an order
+ * 
+ * @route GET /api/orders/:orderId/invoice
+ * @access Private (User must own the order)
+ */
+export const downloadInvoice = asyncHandler(
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const { orderId } = req.params;
+    const userId = req.userId;
 
-    res.json({
-      success: true,
-      data: invoice,
-    });
+    if (!orderId) {
+      throw new AppError('Order ID is required', 400);
+    }
+
+    if (!userId) {
+      throw new AppError('User not authenticated', 401);
+    }
+
+    try {
+      // Generate invoice
+      const { filename, filepath } = await invoiceService.generateInvoice(
+        orderId,
+        userId
+      );
+
+      // Set headers for PDF download
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+      // Stream the file
+      res.sendFile(filepath);
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError('Failed to generate invoice', 500);
+    }
   }
 );
 
 /**
- * Get order invoice as PDF
- * GET /api/orders/:id/invoice/pdf
- * ✅ FIXED: Now properly generates and streams PDF
+ * Generate invoice (admin only)
+ * 
+ * @route POST /api/admin/orders/:orderId/invoice
+ * @access Private (Admin only)
  */
-export const getOrderInvoicePDF = asyncHandler(
-  async (req: Request, res: Response) => {
-    const userId = req.userId!;
-    const { id } = req.params;
+export const generateInvoice = asyncHandler(
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const { orderId } = req.params;
 
-    // This function will set headers and stream PDF directly to response
-    await invoiceService.getInvoicePDF(id, userId, res);
-    
-    // Response is already sent by the service
-    // No need to call res.json() here
+    if (!orderId) {
+      throw new AppError('Order ID is required', 400);
+    }
+
+    try {
+      // Generate invoice (no user check for admin)
+      const { filename, filepath } = await invoiceService.generateInvoice(orderId);
+
+      res.status(200).json({
+        success: true,
+        message: 'Invoice generated successfully',
+        data: {
+          filename,
+          downloadUrl: `/api/orders/${orderId}/invoice`,
+        },
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError('Failed to generate invoice', 500);
+    }
+  }
+);
+
+/**
+ * Get invoice by filename (admin only)
+ * 
+ * @route GET /api/admin/invoices/:filename
+ * @access Private (Admin only)
+ */
+export const getInvoiceByFilename = asyncHandler(
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const { filename } = req.params;
+
+    if (!filename) {
+      throw new AppError('Filename is required', 400);
+    }
+
+    try {
+      const filepath = invoiceService.getInvoiceFilePath(filename);
+
+      // Set headers for PDF download
+      res.setHeader('Content-Type', 'application/pdf');
+      res.setHeader('Content-Disposition', `attachment; filename="${filename}"`);
+
+      // Stream the file
+      res.sendFile(filepath);
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError('Failed to retrieve invoice', 500);
+    }
+  }
+);
+
+/**
+ * Delete invoice (admin only)
+ * 
+ * @route DELETE /api/admin/invoices/:filename
+ * @access Private (Admin only)
+ */
+export const deleteInvoice = asyncHandler(
+  async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const { filename } = req.params;
+
+    if (!filename) {
+      throw new AppError('Filename is required', 400);
+    }
+
+    try {
+      invoiceService.deleteInvoice(filename);
+
+      res.status(200).json({
+        success: true,
+        message: 'Invoice deleted successfully',
+      });
+    } catch (error: any) {
+      if (error instanceof AppError) {
+        throw error;
+      }
+      throw new AppError('Failed to delete invoice', 500);
+    }
   }
 );

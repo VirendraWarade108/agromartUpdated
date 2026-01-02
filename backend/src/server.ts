@@ -1,8 +1,10 @@
 import app from './app';
 import { env } from './config/env';
+import invoiceRoutes from './routes/invoiceRoutes';
 
 const PORT = env.PORT;
 
+app.use('/api', invoiceRoutes);
 /**
  * Start server
  */

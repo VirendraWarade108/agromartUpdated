@@ -27,6 +27,7 @@ import userRoutes from './routes/userRoutes';           // ✅ ADDED
 import blogRoutes from './routes/blogRoutes';           // ✅ ADDED
 import adminAnalyticsRoutes from './routes/adminAnalyticsRoutes'; // ✅ ADDED
 import adminCategoryRoutes from './routes/adminCategoryRoutes';
+import invoiceRoutes from './routes/invoiceRoutes';
 /**
  * Create Express application
  */
@@ -39,6 +40,7 @@ connectDatabase();
 app.use('/api/admin/users', adminUserRoutes);
 app.use('/api/support', supportRoutes);
 app.use('/api/upload', uploadRoutes);
+app.use('/api', invoiceRoutes);
 // Security headers
 app.use(helmet());
 

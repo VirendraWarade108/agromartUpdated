@@ -4,19 +4,57 @@ import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { motion } from 'framer-motion';
-import { CreditCard, Wallet, Building, Smartphone, Lock, ChevronLeft, CheckCircle, MapPin, User, Mail, Phone, Home, Truck, Package } from 'lucide-react';
-import { api, productApi, handleApiError } from '@/lib/api';
+import { 
+  CreditCard, 
+  Wallet, 
+  Building, 
+  Smartphone, 
+  Lock, 
+  ChevronLeft, 
+  CheckCircle, 
+  MapPin, 
+  User, 
+  Mail, 
+  Phone, 
+  Home, 
+  Truck, 
+  Package,
+  AlertCircle,
+  Loader
+} from 'lucide-react';
+import { cartApi, orderApi, productApi, handleApiError } from '@/lib/api';
 import { showErrorToast, showSuccessToast } from '@/store/uiStore';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
+import { formatPrice } from '@/lib/utils';
+
+interface CartItem {
+  id: string;
+  productId: string;
+  quantity: number;
+  product?: {
+    name: string;
+    price: number;
+    image?: string;
+  };
+}
+
+interface Cart {
+  id: string;
+  items: CartItem[];
+  coupon?: {
+    code: string;
+    discount: number;
+  };
+}
 
 export default function CheckoutPage() {
   const router = useRouter();
-  const [step, setStep] = useState(1);
+  const [step, setStep] = useState<1 | 2>(1);
   const [paymentMethod, setPaymentMethod] = useState('card');
   const [loading, setLoading] = useState(false);
   const [isLoadingCart, setIsLoadingCart] = useState(true);
-  const [cart, setCart] = useState<any>(null);
-  const [cartItems, setCartItems] = useState<any[]>([]);
+  const [cart, setCart] = useState<Cart | null>(null);
+  const [cartItems, setCartItems] = useState<CartItem[]>([]);
   
   const [shippingInfo, setShippingInfo] = useState({
     fullName: '',
@@ -29,84 +67,197 @@ export default function CheckoutPage() {
     landmark: ''
   });
 
+  const [errors, setErrors] = useState<Record<string, string>>({});
+
   // Fetch cart from backend
   useEffect(() => {
-    const fetchCart = async () => {
-      setIsLoadingCart(true);
-      try {
-        const data = await api.getCart();
-        setCart(data);
-        
-        // Fetch full product details for cart items
-        if (data.items && data.items.length > 0) {
-          const itemsWithDetails = await Promise.all(
-            data.items.map(async (item: any) => {
-              try {
-                const productResponse = await productApi.getById(item.productId);
-                const product = productResponse.data.data;
-                return {
-                  ...item,
-                  name: product.name,
-                  price: product.price,
-                  image: product.images?.[0] || '/placeholder.png',
-                };
-              } catch (error) {
-                console.error(`Failed to fetch product ${item.productId}:`, error);
-                return {
-                  ...item,
-                  name: `Product ${item.productId}`,
-                  price: 0,
-                  image: '/placeholder.png',
-                };
-              }
-            })
-          );
-          setCartItems(itemsWithDetails);
-        } else {
-          setCartItems([]);
-        }
-      } catch (err) {
-        console.error('Failed to fetch cart:', err);
-        const message = handleApiError(err);
-        showErrorToast(message, 'Failed to load cart');
-        setCartItems([]);
-      } finally {
-        setIsLoadingCart(false);
-      }
-    };
     fetchCart();
   }, []);
 
-  const subtotal = cartItems.reduce((sum, item) => sum + (item.price * item.quantity), 0);
-  const discountAmount = cart?.coupon ? Math.round(subtotal * (cart.coupon.discount || 0) * 100) / 100 : 0;
-  const shipping = 0;
-  const total = subtotal - discountAmount + shipping;
+  const fetchCart = async () => {
+    setIsLoadingCart(true);
+    try {
+      const response = await cartApi.get();
+      
+      if (!response.data.success) {
+        throw new Error(response.data.message || 'Failed to load cart');
+      }
+
+      const cartData = response.data.data;
+      setCart(cartData);
+      
+      // Fetch full product details for cart items
+      if (cartData.items && cartData.items.length > 0) {
+        const itemsWithDetails = await Promise.all(
+          cartData.items.map(async (item: CartItem) => {
+            try {
+              const productResponse = await productApi.getById(item.productId);
+              const product = productResponse.data.data;
+              return {
+                ...item,
+                product: {
+                  name: product.name,
+                  price: product.price,
+                  image: product.image || product.images?.[0] || '/placeholder.png',
+                },
+              };
+            } catch (error) {
+              console.error(`Failed to fetch product ${item.productId}:`, error);
+              return {
+                ...item,
+                product: {
+                  name: `Product ${item.productId}`,
+                  price: 0,
+                  image: '/placeholder.png',
+                },
+              };
+            }
+          })
+        );
+        setCartItems(itemsWithDetails);
+      } else {
+        setCartItems([]);
+      }
+    } catch (err) {
+      console.error('Failed to fetch cart:', err);
+      const message = handleApiError(err);
+      showErrorToast(message, 'Failed to load cart');
+      setCartItems([]);
+    } finally {
+      setIsLoadingCart(false);
+    }
+  };
+
+  // Calculate pricing
+  const subtotal = cartItems.reduce(
+    (sum, item) => sum + (item.product?.price || 0) * item.quantity, 
+    0
+  );
+  const discountAmount = cart?.coupon?.discount 
+    ? Math.round(subtotal * cart.coupon.discount * 100) / 100 
+    : 0;
+  const shippingFee = subtotal >= 5000 ? 0 : 200;
+  const tax = Math.round(((subtotal - discountAmount) * 0.18) * 100) / 100;
+  const total = subtotal - discountAmount + shippingFee + tax;
 
   const paymentMethods = [
-    { id: 'card', name: 'Credit/Debit Card', icon: CreditCard, description: 'Visa, Mastercard, RuPay' },
-    { id: 'upi', name: 'UPI', icon: Smartphone, description: 'Google Pay, PhonePe, Paytm' },
-    { id: 'netbanking', name: 'Net Banking', icon: Building, description: 'All major banks' },
-    { id: 'wallet', name: 'Wallet', icon: Wallet, description: 'Paytm, PhonePe Wallet' },
-    { id: 'cod', name: 'Cash on Delivery', icon: Package, description: 'Pay when you receive' }
+    { 
+      id: 'card', 
+      name: 'Credit/Debit Card', 
+      icon: CreditCard, 
+      description: 'Visa, Mastercard, RuPay' 
+    },
+    { 
+      id: 'upi', 
+      name: 'UPI', 
+      icon: Smartphone, 
+      description: 'Google Pay, PhonePe, Paytm' 
+    },
+    { 
+      id: 'netbanking', 
+      name: 'Net Banking', 
+      icon: Building, 
+      description: 'All major banks' 
+    },
+    { 
+      id: 'wallet', 
+      name: 'Wallet', 
+      icon: Wallet, 
+      description: 'Paytm, PhonePe Wallet' 
+    },
+    { 
+      id: 'cod', 
+      name: 'Cash on Delivery', 
+      icon: Package, 
+      description: 'Pay when you receive' 
+    }
   ];
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setShippingInfo({ ...shippingInfo, [e.target.name]: e.target.value });
+    const { name, value } = e.target;
+    setShippingInfo({ ...shippingInfo, [name]: value });
+    
+    // Clear error for this field
+    if (errors[name]) {
+      setErrors({ ...errors, [name]: '' });
+    }
+  };
+
+  const validateShippingInfo = (): boolean => {
+    const newErrors: Record<string, string> = {};
+
+    if (!shippingInfo.fullName.trim()) {
+      newErrors.fullName = 'Full name is required';
+    }
+
+    if (!shippingInfo.email.trim()) {
+      newErrors.email = 'Email is required';
+    } else if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(shippingInfo.email)) {
+      newErrors.email = 'Invalid email format';
+    }
+
+    if (!shippingInfo.phone.trim()) {
+      newErrors.phone = 'Phone number is required';
+    } else if (!/^\+?[\d\s-]{10,}$/.test(shippingInfo.phone)) {
+      newErrors.phone = 'Invalid phone number';
+    }
+
+    if (!shippingInfo.address.trim()) {
+      newErrors.address = 'Address is required';
+    }
+
+    if (!shippingInfo.city.trim()) {
+      newErrors.city = 'City is required';
+    }
+
+    if (!shippingInfo.state.trim()) {
+      newErrors.state = 'State is required';
+    }
+
+    if (!shippingInfo.pincode.trim()) {
+      newErrors.pincode = 'Pincode is required';
+    } else if (!/^\d{6}$/.test(shippingInfo.pincode)) {
+      newErrors.pincode = 'Pincode must be 6 digits';
+    }
+
+    setErrors(newErrors);
+    return Object.keys(newErrors).length === 0;
   };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
+    
     if (step === 1) {
+      if (!validateShippingInfo()) {
+        showErrorToast('Please fill in all required fields correctly', 'Validation Error');
+        return;
+      }
       setStep(2);
     } else {
-      // Process payment — call checkout API
+      // Process payment
       setLoading(true);
       try {
-        const result = await api.checkout({
-          paymentMethod,
+        const response = await orderApi.create({
           shippingAddress: shippingInfo,
+          paymentMethod,
+          items: cartItems.map(item => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            price: item.product?.price || 0,
+          })),
         });
-        showSuccessToast(`Order placed successfully! Order ID: ${result.order.id}`);
+
+        if (!response.data.success) {
+          throw new Error(response.data.message || 'Order creation failed');
+        }
+
+        const order = response.data.data;
+        showSuccessToast(`Order placed successfully! Order ID: ${order.id}`, 'Success');
+        
+        // Clear cart
+        await cartApi.clear();
+        
+        // Redirect to orders page
         router.push('/dashboard/orders');
       } catch (err) {
         const message = handleApiError(err);
@@ -223,10 +374,17 @@ export default function CheckoutPage() {
                           value={shippingInfo.fullName}
                           onChange={handleInputChange}
                           placeholder="Enter your full name"
-                          required
-                          className="w-full pl-12 pr-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all"
+                          className={`w-full pl-12 pr-4 py-4 border-2 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all ${
+                            errors.fullName ? 'border-red-500' : 'border-gray-200'
+                          }`}
                         />
                       </div>
+                      {errors.fullName && (
+                        <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                          <AlertCircle className="w-4 h-4" />
+                          {errors.fullName}
+                        </p>
+                      )}
                     </div>
 
                     {/* Email & Phone */}
@@ -243,10 +401,17 @@ export default function CheckoutPage() {
                             value={shippingInfo.email}
                             onChange={handleInputChange}
                             placeholder="your@email.com"
-                            required
-                            className="w-full pl-12 pr-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all"
+                            className={`w-full pl-12 pr-4 py-4 border-2 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all ${
+                              errors.email ? 'border-red-500' : 'border-gray-200'
+                            }`}
                           />
                         </div>
+                        {errors.email && (
+                          <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                            <AlertCircle className="w-4 h-4" />
+                            {errors.email}
+                          </p>
+                        )}
                       </div>
                       <div>
                         <label className="block text-sm font-bold text-gray-900 mb-2">
@@ -260,10 +425,17 @@ export default function CheckoutPage() {
                             value={shippingInfo.phone}
                             onChange={handleInputChange}
                             placeholder="+91 98765 43210"
-                            required
-                            className="w-full pl-12 pr-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all"
+                            className={`w-full pl-12 pr-4 py-4 border-2 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all ${
+                              errors.phone ? 'border-red-500' : 'border-gray-200'
+                            }`}
                           />
                         </div>
+                        {errors.phone && (
+                          <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                            <AlertCircle className="w-4 h-4" />
+                            {errors.phone}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -280,10 +452,17 @@ export default function CheckoutPage() {
                           value={shippingInfo.address}
                           onChange={handleInputChange}
                           placeholder="House no., Street, Area"
-                          required
-                          className="w-full pl-12 pr-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all"
+                          className={`w-full pl-12 pr-4 py-4 border-2 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all ${
+                            errors.address ? 'border-red-500' : 'border-gray-200'
+                          }`}
                         />
                       </div>
+                      {errors.address && (
+                        <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                          <AlertCircle className="w-4 h-4" />
+                          {errors.address}
+                        </p>
+                      )}
                     </div>
 
                     {/* City, State, Pincode */}
@@ -298,9 +477,16 @@ export default function CheckoutPage() {
                           value={shippingInfo.city}
                           onChange={handleInputChange}
                           placeholder="City"
-                          required
-                          className="w-full px-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all"
+                          className={`w-full px-4 py-4 border-2 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all ${
+                            errors.city ? 'border-red-500' : 'border-gray-200'
+                          }`}
                         />
+                        {errors.city && (
+                          <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                            <AlertCircle className="w-4 h-4" />
+                            {errors.city}
+                          </p>
+                        )}
                       </div>
                       <div>
                         <label className="block text-sm font-bold text-gray-900 mb-2">
@@ -312,9 +498,16 @@ export default function CheckoutPage() {
                           value={shippingInfo.state}
                           onChange={handleInputChange}
                           placeholder="State"
-                          required
-                          className="w-full px-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all"
+                          className={`w-full px-4 py-4 border-2 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all ${
+                            errors.state ? 'border-red-500' : 'border-gray-200'
+                          }`}
                         />
+                        {errors.state && (
+                          <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                            <AlertCircle className="w-4 h-4" />
+                            {errors.state}
+                          </p>
+                        )}
                       </div>
                       <div>
                         <label className="block text-sm font-bold text-gray-900 mb-2">
@@ -326,9 +519,17 @@ export default function CheckoutPage() {
                           value={shippingInfo.pincode}
                           onChange={handleInputChange}
                           placeholder="110001"
-                          required
-                          className="w-full px-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all"
+                          maxLength={6}
+                          className={`w-full px-4 py-4 border-2 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900 transition-all ${
+                            errors.pincode ? 'border-red-500' : 'border-gray-200'
+                          }`}
                         />
+                        {errors.pincode && (
+                          <p className="mt-1 text-sm text-red-600 flex items-center gap-1">
+                            <AlertCircle className="w-4 h-4" />
+                            {errors.pincode}
+                          </p>
+                        )}
                       </div>
                     </div>
 
@@ -402,75 +603,29 @@ export default function CheckoutPage() {
                     ))}
                   </div>
 
-                  {/* Payment Form (Card) */}
-                  {paymentMethod === 'card' && (
-                    <div className="space-y-6 mb-8 p-6 bg-gray-50 rounded-xl border-2 border-gray-200">
-                      <div>
-                        <label className="block text-sm font-bold text-gray-900 mb-2">
-                          Card Number
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="1234 5678 9012 3456"
-                          className="w-full px-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900"
-                        />
-                      </div>
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <label className="block text-sm font-bold text-gray-900 mb-2">
-                            Expiry Date
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="MM/YY"
-                            className="w-full px-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900"
-                          />
-                        </div>
-                        <div>
-                          <label className="block text-sm font-bold text-gray-900 mb-2">
-                            CVV
-                          </label>
-                          <input
-                            type="text"
-                            placeholder="123"
-                            className="w-full px-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900"
-                          />
-                        </div>
-                      </div>
-                    </div>
-                  )}
-
-                  {/* UPI Form */}
-                  {paymentMethod === 'upi' && (
-                    <div className="space-y-6 mb-8 p-6 bg-gray-50 rounded-xl border-2 border-gray-200">
-                      <div>
-                        <label className="block text-sm font-bold text-gray-900 mb-2">
-                          UPI ID
-                        </label>
-                        <input
-                          type="text"
-                          placeholder="yourname@upi"
-                          className="w-full px-4 py-4 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900"
-                        />
-                      </div>
-                    </div>
-                  )}
-
                   {/* Action Buttons */}
                   <div className="flex gap-4">
                     <button
                       type="button"
                       onClick={() => setStep(1)}
-                      className="flex-1 py-4 bg-gray-100 hover:bg-gray-200 text-gray-900 font-bold rounded-xl transition-all"
+                      disabled={loading}
+                      className="flex-1 py-4 bg-gray-100 hover:bg-gray-200 text-gray-900 font-bold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                     >
                       Back
                     </button>
                     <button
                       type="submit"
                       disabled={loading}
-                      className="flex-1 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-black text-lg rounded-2xl shadow-2xl hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                      className="flex-1 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 text-white font-black text-lg rounded-2xl shadow-2xl hover:scale-105 transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
                     >
-                      {loading ? 'Processing...' : 'Place Order'}
+                      {loading ? (
+                        <>
+                          <Loader className="w-5 h-5 animate-spin" />
+                          Processing...
+                        </>
+                      ) : (
+                        'Place Order'
+                      )}
                     </button>
                   </div>
                 </motion.div>
@@ -488,13 +643,21 @@ export default function CheckoutPage() {
                 {cartItems.map((item) => (
                   <div key={item.id} className="flex items-center gap-4">
                     <div className="w-16 h-16 bg-gradient-to-br from-green-50 to-emerald-50 rounded-xl flex items-center justify-center flex-shrink-0 overflow-hidden">
-                      <img src={item.image} alt={item.name} className="w-full h-full object-cover" />
+                      <img 
+                        src={item.product?.image || '/placeholder.png'} 
+                        alt={item.product?.name || 'Product'} 
+                        className="w-full h-full object-cover" 
+                      />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h4 className="font-bold text-gray-900 text-sm truncate">{item.name}</h4>
+                      <h4 className="font-bold text-gray-900 text-sm truncate">
+                        {item.product?.name || 'Product'}
+                      </h4>
                       <p className="text-sm text-gray-600 font-semibold">Qty: {item.quantity}</p>
                     </div>
-                    <p className="font-bold text-gray-900">₹{(item.price * item.quantity).toFixed(2)}</p>
+                    <p className="font-bold text-gray-900">
+                      {formatPrice((item.product?.price || 0) * item.quantity)}
+                    </p>
                   </div>
                 ))}
               </div>
@@ -503,24 +666,32 @@ export default function CheckoutPage() {
               <div className="space-y-3 pb-6 mb-6 border-b-2 border-gray-200">
                 <div className="flex justify-between text-gray-700">
                   <span className="font-semibold">Subtotal</span>
-                  <span className="font-bold">₹{subtotal.toFixed(2)}</span>
+                  <span className="font-bold">{formatPrice(subtotal)}</span>
                 </div>
-                {cart?.coupon && (
+                {cart?.coupon && discountAmount > 0 && (
                   <div className="flex justify-between text-green-600">
-                    <span className="font-semibold">Discount ({(cart.coupon.discount * 100).toFixed(0)}%)</span>
-                    <span className="font-bold">-₹{discountAmount.toFixed(2)}</span>
+                    <span className="font-semibold">
+                      Discount ({cart.coupon.code})
+                    </span>
+                    <span className="font-bold">-{formatPrice(discountAmount)}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-gray-700">
+                  <span className="font-semibold">Tax (GST 18%)</span>
+                  <span className="font-bold">{formatPrice(tax)}</span>
+                </div>
+                <div className="flex justify-between text-gray-700">
                   <span className="font-semibold">Shipping</span>
-                  <span className="font-bold text-green-600">{shipping === 0 ? 'FREE' : `₹${shipping}`}</span>
+                  <span className="font-bold text-green-600">
+                    {shippingFee === 0 ? 'FREE' : formatPrice(shippingFee)}
+                  </span>
                 </div>
               </div>
 
               {/* Total */}
               <div className="flex justify-between items-center mb-6">
                 <span className="text-xl font-black text-gray-900">Total</span>
-                <span className="text-3xl font-black text-green-600">₹{total.toFixed(2)}</span>
+                <span className="text-3xl font-black text-green-600">{formatPrice(total)}</span>
               </div>
 
               {/* Security Badge */}

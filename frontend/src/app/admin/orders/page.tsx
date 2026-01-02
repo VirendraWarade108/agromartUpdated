@@ -1,49 +1,80 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { 
   ShoppingCart, 
-  Search, 
-  Filter,
+  TrendingUp,
   Download,
-  Eye,
-  Package,
+  Filter,
   Clock,
   CheckCircle,
   XCircle,
-  Truck,
-  ChevronRight,
-  TrendingUp
+  Package
 } from 'lucide-react';
-import { orderApi, adminApi, handleApiError } from '@/lib/api';
+import { adminApi, handleApiError } from '@/lib/api';
 import { showSuccessToast, showErrorToast } from '@/store/uiStore';
-import { TableSkeleton } from '@/components/shared/LoadingSpinner';
-import { formatPrice, formatDate } from '@/lib/utils';
+import { OrderTable } from '@/components/admin/OrderTable';
+import { formatPrice } from '@/lib/utils';
 
+/**
+ * Order Status Type
+ */
+type OrderStatus = 
+  | 'pending' 
+  | 'confirmed' 
+  | 'processing' 
+  | 'shipped' 
+  | 'delivered' 
+  | 'cancelled'
+  | 'paid'
+  | 'failed';
+
+/**
+ * Order Interface
+ */
 interface Order {
   id: string;
-  orderNumber: string;
+  orderNumber?: string;
   userId: string;
-  customerName: string;
-  customerEmail: string;
-  items: any[];
+  user?: {
+    id: string;
+    fullName: string;
+    email: string;
+  };
+  items: Array<{
+    id: string;
+    productId: string;
+    quantity: number;
+    price: number;
+    product?: {
+      id: string;
+      name: string;
+      slug: string;
+      image?: string;
+    };
+  }>;
   total: number;
-  status: 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
-  paymentMethod: string;
-  paymentStatus: 'pending' | 'completed' | 'failed';
-  shippingAddress: any;
+  status: OrderStatus;
+  paymentMethod?: string;
+  paymentStatus?: string;
   createdAt: string;
-  deliveredAt?: string;
+  updatedAt: string;
 }
 
+/**
+ * Admin Orders Page
+ */
 export default function AdminOrdersPage() {
+  const router = useRouter();
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
+  const [selectedStatus, setSelectedStatus] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState('all');
 
-  // Fetch orders
+  /**
+   * Fetch orders
+   */
   useEffect(() => {
     fetchOrders();
   }, [selectedStatus]);
@@ -52,6 +83,7 @@ export default function AdminOrdersPage() {
     setIsLoading(true);
     try {
       const params: any = { limit: 100 };
+      
       if (selectedStatus !== 'all') {
         params.status = selectedStatus;
       }
@@ -60,72 +92,153 @@ export default function AdminOrdersPage() {
       
       if (response.data.success) {
         const data = response.data.data;
-        setOrders(Array.isArray(data) ? data : data.orders || []);
+        
+        // Handle both array and object responses
+        if (Array.isArray(data)) {
+          setOrders(data);
+        } else if (data.orders) {
+          setOrders(data.orders);
+        } else {
+          setOrders([]);
+        }
       }
     } catch (error) {
       const message = handleApiError(error);
       showErrorToast(message, 'Failed to load orders');
-     } finally {
+      setOrders([]);
+    } finally {
       setIsLoading(false);
     }
   };
 
-  // Update order status
-  const handleStatusUpdate = async (orderId: string, newStatus: string) => {
+  /**
+   * Handle status update
+   */
+  const handleStatusUpdate = async (orderId: string, newStatus: OrderStatus) => {
     try {
-      await adminApi.updateOrderStatus(orderId, newStatus);
-      showSuccessToast(`Order status updated to ${newStatus}`);
-      fetchOrders();
+      const response = await adminApi.updateOrderStatus(orderId, newStatus);
+      
+      if (response.data.success) {
+        showSuccessToast(`Order status updated to ${newStatus}`, 'Success');
+        fetchOrders();
+      }
     } catch (error) {
       const message = handleApiError(error);
-      showErrorToast(message, 'Update Failed');
+      showErrorToast(message, 'Failed to update status');
     }
   };
 
-  // Filter orders by search
-  const filteredOrders = orders.filter((order) =>
-    order.orderNumber?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    order.customerName?.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    order.customerEmail?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
-
-  // Status options
-  const statusOptions = [
-    { value: 'all', label: 'All Orders', count: orders.length },
-    { value: 'pending', label: 'Pending', count: orders.filter(o => o.status === 'pending').length },
-    { value: 'confirmed', label: 'Confirmed', count: orders.filter(o => o.status === 'confirmed').length },
-    { value: 'processing', label: 'Processing', count: orders.filter(o => o.status === 'processing').length },
-    { value: 'shipped', label: 'Shipped', count: orders.filter(o => o.status === 'shipped').length },
-    { value: 'delivered', label: 'Delivered', count: orders.filter(o => o.status === 'delivered').length },
-    { value: 'cancelled', label: 'Cancelled', count: orders.filter(o => o.status === 'cancelled').length },
-  ];
-
-  // Get status color and icon
-  const getStatusDisplay = (status: string) => {
-    const displays: Record<string, { color: string; icon: any; label: string }> = {
-      pending: { color: 'bg-yellow-100 text-yellow-700 border-yellow-200', icon: Clock, label: 'Pending' },
-      confirmed: { color: 'bg-blue-100 text-blue-700 border-blue-200', icon: CheckCircle, label: 'Confirmed' },
-      processing: { color: 'bg-purple-100 text-purple-700 border-purple-200', icon: Package, label: 'Processing' },
-      shipped: { color: 'bg-indigo-100 text-indigo-700 border-indigo-200', icon: Truck, label: 'Shipped' },
-      delivered: { color: 'bg-green-100 text-green-700 border-green-200', icon: CheckCircle, label: 'Delivered' },
-      cancelled: { color: 'bg-red-100 text-red-700 border-red-200', icon: XCircle, label: 'Cancelled' },
-    };
-    return displays[status] || displays.pending;
+  /**
+   * Handle view order details
+   */
+  const handleViewDetails = (orderId: string) => {
+    router.push(`/admin/orders/${orderId}`);
   };
 
-  if (isLoading) {
+  /**
+   * Handle download invoice
+   */
+  const handleDownloadInvoice = async (orderId: string) => {
+    try {
+      // Create a temporary link to download the invoice
+      const link = document.createElement('a');
+      link.href = `${process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api'}/orders/${orderId}/invoice`;
+      link.download = `invoice-${orderId}.pdf`;
+      link.target = '_blank';
+      
+      // Get auth token
+      const token = localStorage.getItem('access_token');
+      if (token) {
+        link.setAttribute('Authorization', `Bearer ${token}`);
+      }
+      
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      
+      showSuccessToast('Invoice download started', 'Success');
+    } catch (error) {
+      const message = handleApiError(error);
+      showErrorToast(message, 'Failed to download invoice');
+    }
+  };
+
+  /**
+   * Handle export orders
+   */
+  const handleExportOrders = () => {
+    // TODO: Implement export functionality
+    showSuccessToast('Export functionality coming soon', 'Info');
+  };
+
+  /**
+   * Filter orders by search query
+   */
+  const filteredOrders = orders.filter((order) => {
+    if (!searchQuery) return true;
+    
+    const query = searchQuery.toLowerCase();
+    const orderNumber = order.orderNumber || `ORD-${order.id.substring(0, 8)}`;
+    const customerName = order.user?.fullName?.toLowerCase() || '';
+    const customerEmail = order.user?.email?.toLowerCase() || '';
+    
     return (
-      <div className="p-6">
-        <div className="max-w-7xl mx-auto">
-          <div className="mb-8">
-            <div className="h-10 w-64 bg-white/10 rounded-xl animate-pulse mb-2"></div>
-            <div className="h-6 w-96 bg-white/10 rounded-lg animate-pulse"></div>
-          </div>
-          <TableSkeleton rows={10} cols={6} />
-        </div>
-      </div>
+      orderNumber.toLowerCase().includes(query) ||
+      customerName.includes(query) ||
+      customerEmail.includes(query) ||
+      order.id.toLowerCase().includes(query)
     );
-  }
+  });
+
+  /**
+   * Status filter options
+   */
+  const statusOptions = [
+    { value: 'all', label: 'All Orders', count: orders.length },
+    { 
+      value: 'pending', 
+      label: 'Pending', 
+      count: orders.filter(o => o.status === 'pending').length 
+    },
+    { 
+      value: 'confirmed', 
+      label: 'Confirmed', 
+      count: orders.filter(o => o.status === 'confirmed').length 
+    },
+    { 
+      value: 'processing', 
+      label: 'Processing', 
+      count: orders.filter(o => o.status === 'processing').length 
+    },
+    { 
+      value: 'shipped', 
+      label: 'Shipped', 
+      count: orders.filter(o => o.status === 'shipped').length 
+    },
+    { 
+      value: 'delivered', 
+      label: 'Delivered', 
+      count: orders.filter(o => o.status === 'delivered').length 
+    },
+    { 
+      value: 'cancelled', 
+      label: 'Cancelled', 
+      count: orders.filter(o => o.status === 'cancelled').length 
+    },
+  ];
+
+  /**
+   * Calculate summary statistics
+   */
+  const totalRevenue = orders
+    .filter(o => o.status === 'delivered' || o.status === 'paid')
+    .reduce((sum, o) => sum + o.total, 0);
+  
+  const pendingOrders = orders.filter(
+    o => ['pending', 'confirmed', 'processing'].includes(o.status)
+  ).length;
+  
+  const completedOrders = orders.filter(o => o.status === 'delivered').length;
 
   return (
     <div className="p-6">
@@ -148,13 +261,11 @@ export default function AdminOrdersPage() {
               <button
                 key={option.value}
                 onClick={() => setSelectedStatus(option.value)}
-                className={`
-                  px-4 py-2 rounded-xl font-bold text-sm transition-all
-                  ${selectedStatus === option.value
+                className={`px-4 py-2 rounded-xl font-bold text-sm transition-all ${
+                  selectedStatus === option.value
                     ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg'
                     : 'bg-gray-50 text-gray-700 hover:bg-gray-100'
-                  }
-                `}
+                }`}
               >
                 {option.label} ({option.count})
               </button>
@@ -168,7 +279,7 @@ export default function AdminOrdersPage() {
             {/* Search */}
             <div className="flex-1">
               <div className="relative">
-                <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
+                <Filter className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
                 <input
                   type="text"
                   placeholder="Search by order number, customer name, or email..."
@@ -180,7 +291,10 @@ export default function AdminOrdersPage() {
             </div>
 
             {/* Export Button */}
-            <button className="flex items-center gap-2 px-6 py-3 border-2 border-gray-200 hover:border-green-400 rounded-xl font-bold text-gray-900 transition-all">
+            <button 
+              onClick={handleExportOrders}
+              className="flex items-center gap-2 px-6 py-3 border-2 border-gray-200 hover:border-green-400 rounded-xl font-bold text-gray-900 transition-all"
+            >
               <Download className="w-5 h-5" />
               Export
             </button>
@@ -188,138 +302,14 @@ export default function AdminOrdersPage() {
         </div>
 
         {/* Orders Table */}
-        <div className="bg-white rounded-2xl border-2 border-gray-200 shadow-xl overflow-hidden">
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead className="bg-gray-50 border-b-2 border-gray-200">
-                <tr>
-                  <th className="px-6 py-4 text-left text-sm font-black text-gray-900">
-                    Order
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-black text-gray-900">
-                    Customer
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-black text-gray-900">
-                    Items
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-black text-gray-900">
-                    Total
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-black text-gray-900">
-                    Status
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-black text-gray-900">
-                    Payment
-                  </th>
-                  <th className="px-6 py-4 text-left text-sm font-black text-gray-900">
-                    Date
-                  </th>
-                  <th className="px-6 py-4 text-right text-sm font-black text-gray-900">
-                    Actions
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-200">
-                {filteredOrders.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="px-6 py-12 text-center">
-                      <div className="flex flex-col items-center gap-3">
-                        <ShoppingCart className="w-12 h-12 text-gray-400" />
-                        <p className="text-gray-600 font-bold">No orders found</p>
-                        <p className="text-gray-500 text-sm font-semibold">
-                          {searchQuery ? 'Try different search terms' : 'Orders will appear here when customers make purchases'}
-                        </p>
-                      </div>
-                    </td>
-                  </tr>
-                ) : (
-                  filteredOrders.map((order) => {
-                    const statusDisplay = getStatusDisplay(order.status);
-                    const StatusIcon = statusDisplay.icon;
-
-                    return (
-                      <tr key={order.id} className="hover:bg-gray-50 transition-colors">
-                        {/* Order Number */}
-                        <td className="px-6 py-4">
-                          <div>
-                            <p className="font-black text-gray-900">{order.orderNumber || `ORD-${order.id.substring(0, 8)}`}</p>
-                            <p className="text-sm text-gray-600 font-semibold">ID: {order.id}</p>
-                          </div>
-                        </td>
-
-                        {/* Customer */}
-                        <td className="px-6 py-4">
-                          <div>
-                            <p className="font-bold text-gray-900">{order.customerName || 'N/A'}</p>
-                            <p className="text-sm text-gray-600 font-semibold">{order.customerEmail || 'N/A'}</p>
-                          </div>
-                        </td>
-
-                        {/* Items */}
-                        <td className="px-6 py-4">
-                          <p className="font-bold text-gray-900">{order.items.length} items</p>
-                        </td>
-
-                        {/* Total */}
-                        <td className="px-6 py-4">
-                          <p className="font-black text-gray-900 text-lg">{formatPrice(order.total)}</p>
-                        </td>
-
-                        {/* Status */}
-                        <td className="px-6 py-4">
-                          <span className={`inline-flex items-center gap-2 px-3 py-1 rounded-lg text-sm font-bold border-2 ${statusDisplay.color}`}>
-                            <StatusIcon className="w-4 h-4" />
-                            {statusDisplay.label}
-                          </span>
-                        </td>
-
-                        {/* Payment */}
-                        <td className="px-6 py-4">
-                          <div>
-                            <p className="font-bold text-gray-900 capitalize">{order.paymentMethod || 'N/A'}</p>
-                            <span className={`text-xs font-bold ${order.paymentStatus === 'completed' ? 'text-green-600' : 'text-yellow-600'}`}>
-                              {order.paymentStatus || 'pending'}
-                            </span>
-                          </div>
-                        </td>
-
-                        {/* Date */}
-                        <td className="px-6 py-4">
-                          <p className="text-sm font-semibold text-gray-900">
-                            {formatDate(order.createdAt)}
-                          </p>
-                        </td>
-
-                        {/* Actions */}
-                        <td className="px-6 py-4">
-                          <div className="flex items-center justify-end gap-2">
-                            <Link
-                              href={`/admin/orders/${order.id}`}
-                              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                              title="View Details"
-                            >
-                              <Eye className="w-5 h-5 text-blue-600" />
-                            </Link>
-                            <button
-                              onClick={() => {
-                                // Show status update modal
-                                alert('Status update modal would open here');
-                              }}
-                              className="p-2 hover:bg-gray-100 rounded-lg transition-colors"
-                              title="Update Status"
-                            >
-                              <ChevronRight className="w-5 h-5 text-gray-600" />
-                            </button>
-                          </div>
-                        </td>
-                      </tr>
-                    );
-                  })
-                )}
-              </tbody>
-            </table>
-          </div>
-        </div>
+        <OrderTable
+          orders={filteredOrders}
+          isLoading={isLoading}
+          onStatusUpdate={handleStatusUpdate}
+          onViewDetails={handleViewDetails}
+          onDownloadInvoice={handleDownloadInvoice}
+          showActions={true}
+        />
 
         {/* Summary Stats */}
         <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
@@ -331,27 +321,30 @@ export default function AdminOrdersPage() {
               icon: ShoppingCart
             },
             { 
-              label: 'Processing', 
-              value: orders.filter(o => ['pending', 'confirmed', 'processing'].includes(o.status)).length, 
+              label: 'Pending', 
+              value: pendingOrders, 
               color: 'text-purple-600',
               icon: Clock
             },
             { 
               label: 'Completed', 
-              value: orders.filter(o => o.status === 'delivered').length, 
+              value: completedOrders, 
               color: 'text-green-600',
               icon: CheckCircle
             },
             { 
               label: 'Revenue', 
-              value: formatPrice(orders.reduce((sum, o) => sum + o.total, 0)), 
+              value: formatPrice(totalRevenue), 
               color: 'text-orange-600',
               icon: TrendingUp
             },
           ].map((stat, idx) => {
             const Icon = stat.icon;
             return (
-              <div key={idx} className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-6">
+              <div 
+                key={idx} 
+                className="bg-white rounded-2xl border-2 border-gray-200 shadow-lg p-6"
+              >
                 <div className="flex items-center justify-between mb-3">
                   <p className="text-gray-600 font-bold text-sm">{stat.label}</p>
                   <Icon className={`w-6 h-6 ${stat.color}`} />
