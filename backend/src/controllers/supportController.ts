@@ -14,7 +14,6 @@ export const submitContactMessage = asyncHandler(
   async (req: Request, res: Response) => {
     const { name, email, phone, subject, message } = req.body;
 
-    // Validate required fields
     if (!name || !email || !subject || !message) {
       return res.status(400).json({
         success: false,
@@ -313,6 +312,256 @@ export const deleteFAQ = asyncHandler(
     const { id } = req.params;
 
     const result = await supportService.deleteFAQ(id);
+
+    res.json({
+      success: true,
+      message: result.message,
+    });
+  }
+);
+
+// ============================================
+// SUPPORT TICKET ENDPOINTS
+// ============================================
+
+/**
+ * Create support ticket (User)
+ * POST /api/support/tickets
+ */
+export const createTicket = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { subject, description, priority, attachments } = req.body;
+    const userId = req.userId;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    if (!subject || !description) {
+      return res.status(400).json({
+        success: false,
+        message: 'Subject and description are required',
+      });
+    }
+
+    const ticket = await supportService.createTicket({
+      userId,
+      subject,
+      description,
+      priority,
+      attachments,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Support ticket created successfully',
+      data: ticket,
+    });
+  }
+);
+
+/**
+ * Get user's tickets
+ * GET /api/support/tickets
+ */
+export const getUserTickets = asyncHandler(
+  async (req: Request, res: Response) => {
+    const userId = req.userId;
+    const { status, priority, page, limit } = req.query;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    const result = await supportService.getUserTickets(userId, {
+      status: status as any,
+      priority: priority as any,
+      page: page ? parseInt(page as string) : undefined,
+      limit: limit ? parseInt(limit as string) : undefined,
+    });
+
+    res.json({
+      success: true,
+      data: result.tickets,
+      pagination: result.pagination,
+    });
+  }
+);
+
+/**
+ * Get all tickets (Admin)
+ * GET /api/admin/support/tickets
+ */
+export const getAllTickets = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { status, priority, assignedToId, page, limit } = req.query;
+
+    const result = await supportService.getAllTickets({
+      status: status as any,
+      priority: priority as any,
+      assignedToId: assignedToId as string,
+      page: page ? parseInt(page as string) : undefined,
+      limit: limit ? parseInt(limit as string) : undefined,
+    });
+
+    res.json({
+      success: true,
+      data: result.tickets,
+      pagination: result.pagination,
+    });
+  }
+);
+
+/**
+ * Get ticket by ID
+ * GET /api/support/tickets/:id
+ */
+export const getTicketById = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const userId = req.userId;
+    const isAdmin = req.isAdmin || false;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    const ticket = await supportService.getTicketById(id, userId, isAdmin);
+
+    res.json({
+      success: true,
+      data: ticket,
+    });
+  }
+);
+
+/**
+ * Update ticket
+ * PUT /api/support/tickets/:id
+ */
+export const updateTicket = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const userId = req.userId;
+    const isAdmin = req.isAdmin || false;
+    const { subject, description, status, priority, assignedToId } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    const ticket = await supportService.updateTicket(id, userId, isAdmin, {
+      subject,
+      description,
+      status,
+      priority,
+      assignedToId,
+    });
+
+    res.json({
+      success: true,
+      message: 'Ticket updated successfully',
+      data: ticket,
+    });
+  }
+);
+
+/**
+ * Add comment to ticket
+ * POST /api/support/tickets/:id/comments
+ */
+export const addComment = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const userId = req.userId;
+    const isAdmin = req.isAdmin || false;
+    const { message, isInternal } = req.body;
+
+    if (!userId) {
+      return res.status(401).json({
+        success: false,
+        message: 'Authentication required',
+      });
+    }
+
+    if (!message) {
+      return res.status(400).json({
+        success: false,
+        message: 'Message is required',
+      });
+    }
+
+    const comment = await supportService.addComment({
+      ticketId: id,
+      userId,
+      message,
+      isInternal,
+      isAdmin,
+    });
+
+    res.status(201).json({
+      success: true,
+      message: 'Comment added successfully',
+      data: comment,
+    });
+  }
+);
+
+/**
+ * Assign ticket (Admin)
+ * PUT /api/admin/support/tickets/:id/assign
+ */
+export const assignTicket = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { assignedToId } = req.body;
+
+    const ticket = await supportService.assignTicket(id, assignedToId || null);
+
+    res.json({
+      success: true,
+      message: assignedToId ? 'Ticket assigned successfully' : 'Ticket unassigned successfully',
+      data: ticket,
+    });
+  }
+);
+
+/**
+ * Get ticket statistics (Admin)
+ * GET /api/admin/support/tickets/stats
+ */
+export const getTicketStats = asyncHandler(
+  async (req: Request, res: Response) => {
+    const stats = await supportService.getTicketStats();
+
+    res.json({
+      success: true,
+      data: stats,
+    });
+  }
+);
+
+/**
+ * Delete ticket (Admin)
+ * DELETE /api/admin/support/tickets/:id
+ */
+export const deleteTicket = asyncHandler(
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    const result = await supportService.deleteTicket(id);
 
     res.json({
       success: true,

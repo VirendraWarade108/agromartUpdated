@@ -2,6 +2,47 @@ import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
 
 // ============================================
+// TYPES & ENUMS
+// ============================================
+
+export enum TicketStatus {
+  OPEN = 'OPEN',
+  PENDING = 'PENDING',
+  RESOLVED = 'RESOLVED'
+}
+
+export enum TicketPriority {
+  LOW = 'LOW',
+  MEDIUM = 'MEDIUM',
+  HIGH = 'HIGH',
+  URGENT = 'URGENT'
+}
+
+interface CreateTicketData {
+  userId: string;
+  subject: string;
+  description: string;
+  priority?: TicketPriority;
+  attachments?: string[];
+}
+
+interface CreateCommentData {
+  ticketId: string;
+  userId: string;
+  message: string;
+  isInternal?: boolean;
+  isAdmin?: boolean;
+}
+
+interface UpdateTicketData {
+  subject?: string;
+  description?: string;
+  status?: TicketStatus;
+  priority?: TicketPriority;
+  assignedToId?: string | null;
+}
+
+// ============================================
 // CONTACT MESSAGE FUNCTIONS
 // ============================================
 
@@ -91,7 +132,6 @@ export const deleteContactMessage = async (messageId: string) => {
  * Subscribe to newsletter
  */
 export const subscribeToNewsletter = async (email: string) => {
-  // Check if already subscribed
   const existing = await prisma.newsletter.findUnique({
     where: { email },
   });
@@ -100,7 +140,6 @@ export const subscribeToNewsletter = async (email: string) => {
     if (existing.isActive) {
       throw new AppError('Email already subscribed', 400);
     } else {
-      // Reactivate subscription
       const updated = await prisma.newsletter.update({
         where: { email },
         data: {
@@ -112,7 +151,6 @@ export const subscribeToNewsletter = async (email: string) => {
     }
   }
 
-  // Create new subscription
   const subscription = await prisma.newsletter.create({
     data: { email },
   });
@@ -289,4 +327,498 @@ export const getFAQCategories = async () => {
   });
 
   return faqs.map((f) => f.category);
+};
+
+// ============================================
+// SUPPORT TICKET FUNCTIONS
+// ============================================
+
+/**
+ * Create support ticket (User)
+ */
+export const createTicket = async (data: CreateTicketData) => {
+  try {
+    const ticket = await prisma.supportTicket.create({
+      data: {
+        userId: data.userId,
+        subject: data.subject,
+        description: data.description,
+        status: TicketStatus.OPEN,
+        priority: data.priority || TicketPriority.MEDIUM,
+        attachments: data.attachments || [],
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return ticket;
+  } catch (error: any) {
+    throw new AppError('Failed to create ticket', 500, 'INTERNAL_ERROR');
+  }
+};
+
+/**
+ * Get user's tickets
+ */
+export const getUserTickets = async (
+  userId: string,
+  filters?: {
+    status?: TicketStatus;
+    priority?: TicketPriority;
+    page?: number;
+    limit?: number;
+  }
+) => {
+  const { status, priority, page = 1, limit = 20 } = filters || {};
+  const skip = (page - 1) * limit;
+
+  const where: any = { userId };
+  if (status) where.status = status;
+  if (priority) where.priority = priority;
+
+  try {
+    const [tickets, total] = await Promise.all([
+      prisma.supportTicket.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+            },
+          },
+          assignedTo: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+            },
+          },
+          _count: {
+            select: {
+              comments: true,
+            },
+          },
+        },
+      }),
+      prisma.supportTicket.count({ where }),
+    ]);
+
+    return {
+      tickets,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  } catch (error: any) {
+    throw new AppError('Failed to fetch tickets', 500, 'INTERNAL_ERROR');
+  }
+};
+
+/**
+ * Get all tickets (Admin)
+ */
+export const getAllTickets = async (filters?: {
+  status?: TicketStatus;
+  priority?: TicketPriority;
+  assignedToId?: string;
+  page?: number;
+  limit?: number;
+}) => {
+  const { status, priority, assignedToId, page = 1, limit = 20 } = filters || {};
+  const skip = (page - 1) * limit;
+
+  const where: any = {};
+  if (status) where.status = status;
+  if (priority) where.priority = priority;
+  if (assignedToId) where.assignedToId = assignedToId;
+
+  try {
+    const [tickets, total] = await Promise.all([
+      prisma.supportTicket.findMany({
+        where,
+        skip,
+        take: limit,
+        orderBy: { createdAt: 'desc' },
+        include: {
+          user: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+            },
+          },
+          assignedTo: {
+            select: {
+              id: true,
+              fullName: true,
+              email: true,
+            },
+          },
+          _count: {
+            select: {
+              comments: true,
+            },
+          },
+        },
+      }),
+      prisma.supportTicket.count({ where }),
+    ]);
+
+    return {
+      tickets,
+      pagination: {
+        total,
+        page,
+        limit,
+        totalPages: Math.ceil(total / limit),
+      },
+    };
+  } catch (error: any) {
+    throw new AppError('Failed to fetch tickets', 500, 'INTERNAL_ERROR');
+  }
+};
+
+/**
+ * Get ticket by ID with ownership check
+ */
+export const getTicketById = async (
+  ticketId: string,
+  userId: string,
+  isAdmin: boolean
+) => {
+  try {
+    const ticket = await prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+        comments: {
+          where: isAdmin ? {} : { isInternal: false },
+          orderBy: { createdAt: 'asc' },
+          include: {
+            user: {
+              select: {
+                id: true,
+                fullName: true,
+                email: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    if (!ticket) {
+      throw new AppError('Ticket not found', 404, 'NOT_FOUND');
+    }
+
+    if (!isAdmin && ticket.userId !== userId) {
+      throw new AppError('Access denied', 403, 'FORBIDDEN');
+    }
+
+    return ticket;
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError('Failed to fetch ticket', 500, 'INTERNAL_ERROR');
+  }
+};
+
+/**
+ * Update ticket (Admin or Owner for limited fields)
+ */
+export const updateTicket = async (
+  ticketId: string,
+  userId: string,
+  isAdmin: boolean,
+  data: UpdateTicketData
+) => {
+  try {
+    const ticket = await prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+    });
+
+    if (!ticket) {
+      throw new AppError('Ticket not found', 404, 'NOT_FOUND');
+    }
+
+    if (!isAdmin && ticket.userId !== userId) {
+      throw new AppError('Access denied', 403, 'FORBIDDEN');
+    }
+
+    if (!isAdmin && (data.status || data.assignedToId !== undefined)) {
+      throw new AppError(
+        'Only admins can change status or assignment',
+        403,
+        'FORBIDDEN'
+      );
+    }
+
+    if (data.status) {
+      validateStatusTransition(ticket.status, data.status);
+    }
+
+    const updated = await prisma.supportTicket.update({
+      where: { id: ticketId },
+      data: {
+        subject: data.subject,
+        description: data.description,
+        status: data.status,
+        priority: data.priority,
+        assignedToId: data.assignedToId,
+        updatedAt: new Date(),
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return updated;
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError('Failed to update ticket', 500, 'INTERNAL_ERROR');
+  }
+};
+
+/**
+ * Validate status transition
+ */
+const validateStatusTransition = (
+  currentStatus: string,
+  newStatus: TicketStatus
+) => {
+  const validTransitions: Record<string, TicketStatus[]> = {
+    [TicketStatus.OPEN]: [TicketStatus.PENDING, TicketStatus.RESOLVED],
+    [TicketStatus.PENDING]: [TicketStatus.OPEN, TicketStatus.RESOLVED],
+    [TicketStatus.RESOLVED]: [TicketStatus.OPEN],
+  };
+
+  const allowed = validTransitions[currentStatus];
+  if (!allowed || !allowed.includes(newStatus)) {
+    throw new AppError(
+      `Invalid status transition from ${currentStatus} to ${newStatus}`,
+      400,
+      'INVALID_STATE'
+    );
+  }
+};
+
+/**
+ * Add comment to ticket
+ */
+export const addComment = async (data: CreateCommentData) => {
+  try {
+    const ticket = await prisma.supportTicket.findUnique({
+      where: { id: data.ticketId },
+    });
+
+    if (!ticket) {
+      throw new AppError('Ticket not found', 404, 'NOT_FOUND');
+    }
+
+    if (!data.isAdmin && ticket.userId !== data.userId) {
+      throw new AppError('Access denied', 403, 'FORBIDDEN');
+    }
+
+    if (!data.isAdmin && data.isInternal) {
+      throw new AppError(
+        'Only admins can add internal notes',
+        403,
+        'FORBIDDEN'
+      );
+    }
+
+    const comment = await prisma.ticketComment.create({
+      data: {
+        ticketId: data.ticketId,
+        userId: data.userId,
+        message: data.message,
+        isInternal: data.isInternal || false,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    await prisma.supportTicket.update({
+      where: { id: data.ticketId },
+      data: { updatedAt: new Date() },
+    });
+
+    return comment;
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError('Failed to add comment', 500, 'INTERNAL_ERROR');
+  }
+};
+
+/**
+ * Assign ticket to admin (Admin only)
+ */
+export const assignTicket = async (
+  ticketId: string,
+  assignedToId: string | null
+) => {
+  try {
+    const ticket = await prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+    });
+
+    if (!ticket) {
+      throw new AppError('Ticket not found', 404, 'NOT_FOUND');
+    }
+
+    if (assignedToId) {
+      const admin = await prisma.user.findUnique({
+        where: { id: assignedToId },
+      });
+
+      if (!admin || !admin.isAdmin) {
+        throw new AppError('Invalid admin user', 400, 'INVALID_STATE');
+      }
+    }
+
+    const updated = await prisma.supportTicket.update({
+      where: { id: ticketId },
+      data: {
+        assignedToId,
+        updatedAt: new Date(),
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+        assignedTo: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+    });
+
+    return updated;
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError('Failed to assign ticket', 500, 'INTERNAL_ERROR');
+  }
+};
+
+/**
+ * Get ticket statistics (Admin)
+ */
+export const getTicketStats = async () => {
+  try {
+    const [total, open, pending, resolved, highPriority, unassigned] = await Promise.all([
+      prisma.supportTicket.count(),
+      prisma.supportTicket.count({ where: { status: TicketStatus.OPEN } }),
+      prisma.supportTicket.count({ where: { status: TicketStatus.PENDING } }),
+      prisma.supportTicket.count({ where: { status: TicketStatus.RESOLVED } }),
+      prisma.supportTicket.count({
+        where: {
+          priority: {
+            in: [TicketPriority.HIGH, TicketPriority.URGENT],
+          },
+        },
+      }),
+      prisma.supportTicket.count({ where: { assignedToId: null } }),
+    ]);
+
+    return {
+      total,
+      byStatus: {
+        open,
+        pending,
+        resolved,
+      },
+      highPriority,
+      unassigned,
+    };
+  } catch (error: any) {
+    throw new AppError('Failed to fetch ticket stats', 500, 'INTERNAL_ERROR');
+  }
+};
+
+/**
+ * Delete ticket (Admin only)
+ */
+export const deleteTicket = async (ticketId: string) => {
+  try {
+    const ticket = await prisma.supportTicket.findUnique({
+      where: { id: ticketId },
+    });
+
+    if (!ticket) {
+      throw new AppError('Ticket not found', 404, 'NOT_FOUND');
+    }
+
+    await prisma.supportTicket.delete({
+      where: { id: ticketId },
+    });
+
+    return { message: 'Ticket deleted successfully' };
+  } catch (error: any) {
+    if (error instanceof AppError) {
+      throw error;
+    }
+    throw new AppError('Failed to delete ticket', 500, 'INTERNAL_ERROR');
+  }
 };
