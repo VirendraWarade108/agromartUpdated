@@ -183,9 +183,41 @@ export const productApi = {
   getRelated: (id: string) => 
     apiClient.get(`/products/${id}/related`),
   
-  getReviews: (id: string) => 
-    apiClient.get(`/products/${id}/reviews`),
+  // REVIEW METHODS (NEW & UPDATED)
+  getReviews: (productId: string, params?: {
+    rating?: number;
+    page?: number;
+    limit?: number;
+    sortBy?: string;
+  }) => 
+    apiClient.get(`/products/${productId}/reviews`, { params }),
+
+  getReviewStats: (productId: string) => 
+    apiClient.get(`/products/${productId}/reviews/stats`),
+
+  createReview: (productId: string, data: {
+    rating: number;
+    title?: string;
+    comment: string;
+    images?: string[];
+  }) => 
+    apiClient.post(`/products/${productId}/reviews`, data),
+
+  updateReview: (reviewId: string, data: {
+    rating?: number;
+    title?: string;
+    comment?: string;
+    images?: string[];
+  }) => 
+    apiClient.put(`/reviews/${reviewId}`, data),
+
+  deleteReview: (reviewId: string) => 
+    apiClient.delete(`/reviews/${reviewId}`),
+
+  markReviewHelpful: (reviewId: string) => 
+    apiClient.post(`/reviews/${reviewId}/helpful`),
   
+  // DEPRECATED - kept for backwards compatibility
   addReview: (id: string, data: { rating: number; comment: string }) => 
     apiClient.post(`/products/${id}/reviews`, data),
 };
@@ -195,8 +227,8 @@ export const productApi = {
 // ============================================
 
 export const wishlistApi = {
-  get: () => 
-    apiClient.get('/users/wishlist'),
+  get: (params?: { page?: number; limit?: number }) => 
+    apiClient.get('/users/wishlist', { params }),
   
   add: (productId: string) => 
     apiClient.post('/users/wishlist', { productId }),
@@ -213,8 +245,14 @@ export const wishlistApi = {
   clear: () => 
     apiClient.delete('/users/wishlist'),
   
-  moveToCart: (productIds?: string[]) => 
+  moveToCart: (productIds: string[]) => 
     apiClient.post('/users/wishlist/move-to-cart', { productIds }),
+  
+  bulkAdd: (productIds: string[]) => 
+    apiClient.post('/users/wishlist/bulk-add', { productIds }),
+  
+  bulkRemove: (productIds: string[]) => 
+    apiClient.post('/users/wishlist/bulk-remove', { productIds }),
 };
 
 // ============================================
@@ -316,9 +354,12 @@ export const userApi = {
   setDefaultAddress: (id: string) => 
     apiClient.put(`/users/addresses/${id}/default`),
   
-  // ✅ DEPRECATED - Use wishlistApi instead
-  getWishlist: () => 
-    apiClient.get('/users/wishlist'),
+  getOrderHistory: () => 
+    apiClient.get('/users/orders'),
+  
+  // WISHLIST METHODS (NEW - Direct on userApi for convenience)
+  getWishlist: (params?: { page?: number; limit?: number }) => 
+    apiClient.get('/users/wishlist', { params }),
   
   addToWishlist: (productId: string) => 
     apiClient.post('/users/wishlist', { productId }),
@@ -326,8 +367,23 @@ export const userApi = {
   removeFromWishlist: (productId: string) => 
     apiClient.delete(`/users/wishlist/${productId}`),
   
-  getOrderHistory: () => 
-    apiClient.get('/users/orders'),
+  checkWishlist: (productId: string) => 
+    apiClient.get(`/users/wishlist/check/${productId}`),
+  
+  getWishlistCount: () => 
+    apiClient.get('/users/wishlist/count'),
+  
+  clearWishlist: () => 
+    apiClient.delete('/users/wishlist'),
+  
+  moveWishlistToCart: (productIds: string[]) => 
+    apiClient.post('/users/wishlist/move-to-cart', { productIds }),
+  
+  bulkAddToWishlist: (productIds: string[]) => 
+    apiClient.post('/users/wishlist/bulk-add', { productIds }),
+  
+  bulkRemoveFromWishlist: (productIds: string[]) => 
+    apiClient.post('/users/wishlist/bulk-remove', { productIds }),
 };
 
 // ============================================

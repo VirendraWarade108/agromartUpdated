@@ -5,12 +5,13 @@ import { authenticate, requireAdmin } from '../middleware/auth';
 const router = Router();
 
 // ============================================
-// PUBLIC ROUTES (No auth required)
+// PUBLIC ROUTES (No authentication required)
 // ============================================
 
 /**
  * Get product reviews
  * GET /api/products/:productId/reviews
+ * Query: ?rating=5&page=1&limit=10&sortBy=recent
  */
 router.get(
   '/products/:productId/reviews',
@@ -20,11 +21,18 @@ router.get(
 /**
  * Get product review statistics
  * GET /api/products/:productId/reviews/stats
+ * Returns: totalReviews, averageRating, ratingDistribution
  */
 router.get(
   '/products/:productId/reviews/stats',
   reviewController.getProductReviewStats
 );
+
+/**
+ * Mark review as helpful (public - no auth)
+ * POST /api/reviews/:id/helpful
+ */
+router.post('/:id/helpful', reviewController.markReviewHelpful);
 
 // ============================================
 // USER ROUTES (Authentication required)
@@ -33,19 +41,21 @@ router.get(
 /**
  * Get my reviews
  * GET /api/reviews/my-reviews
- * Note: Must come before /:id to avoid route conflicts
+ * IMPORTANT: Must come before /:id to avoid route conflicts
  */
 router.get('/my-reviews', authenticate, reviewController.getMyReviews);
 
 /**
  * Create a review (primary endpoint)
  * POST /api/reviews
+ * Body: { productId, rating, title?, comment, images? }
  */
 router.post('/', authenticate, reviewController.createReview);
 
 /**
- * Create a review for a specific product (frontend compatibility alias)
+ * Create a review for a specific product (frontend compatibility)
  * POST /api/products/:productId/reviews
+ * Body: { rating, title?, comment, images? }
  */
 router.post(
   '/products/:productId/reviews',
@@ -56,6 +66,7 @@ router.post(
 /**
  * Update a review
  * PUT /api/reviews/:id
+ * Body: { rating?, title?, comment?, images? }
  */
 router.put('/:id', authenticate, reviewController.updateReview);
 
@@ -65,24 +76,19 @@ router.put('/:id', authenticate, reviewController.updateReview);
  */
 router.delete('/:id', authenticate, reviewController.deleteReview);
 
-/**
- * Mark review as helpful
- * POST /api/reviews/:id/helpful
- */
-router.post('/:id/helpful', reviewController.markReviewHelpful);
-
 // ============================================
-// ADMIN ROUTES
+// ADMIN ROUTES (Authentication + Admin required)
 // ============================================
 
 /**
- * Get all reviews
+ * Get all reviews (Admin)
  * GET /api/admin/reviews
+ * Query: ?productId=xxx&userId=xxx&rating=5&page=1&limit=20
  */
 router.get('/admin', authenticate, requireAdmin, reviewController.getAllReviews);
 
 /**
- * Delete review
+ * Delete review (Admin)
  * DELETE /api/admin/reviews/:id
  */
 router.delete(

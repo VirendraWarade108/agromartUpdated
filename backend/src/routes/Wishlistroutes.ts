@@ -4,7 +4,9 @@ import { authenticate } from '../middleware/auth';
 
 const router = Router();
 
-// All routes require authentication
+// ============================================
+// ALL ROUTES REQUIRE AUTHENTICATION
+// ============================================
 router.use(authenticate);
 
 // ============================================
@@ -15,7 +17,7 @@ router.use(authenticate);
 /**
  * Get wishlist count
  * GET /api/users/wishlist/count
- * Note: Must come before /:productId to avoid route conflicts
+ * IMPORTANT: Must come before other routes to avoid conflicts
  */
 router.get('/count', wishlistController.getWishlistCount);
 
@@ -26,20 +28,37 @@ router.get('/count', wishlistController.getWishlistCount);
 router.get('/check/:productId', wishlistController.checkWishlist);
 
 /**
- * Move items to cart
+ * Move items to cart (bulk operation)
  * POST /api/users/wishlist/move-to-cart
+ * Body: { productIds: string[] }
  */
 router.post('/move-to-cart', wishlistController.moveToCart);
 
 /**
+ * Bulk add to wishlist
+ * POST /api/users/wishlist/bulk-add
+ * Body: { productIds: string[] }
+ */
+router.post('/bulk-add', wishlistController.bulkAddToWishlist);
+
+/**
+ * Bulk remove from wishlist
+ * POST /api/users/wishlist/bulk-remove
+ * Body: { productIds: string[] }
+ */
+router.post('/bulk-remove', wishlistController.bulkRemoveFromWishlist);
+
+/**
  * Get user's wishlist
  * GET /api/users/wishlist
+ * Query: ?page=1&limit=20 (optional pagination)
  */
 router.get('/', wishlistController.getWishlist);
 
 /**
  * Add product to wishlist
  * POST /api/users/wishlist
+ * Body: { productId: string }
  */
 router.post('/', wishlistController.addToWishlist);
 
