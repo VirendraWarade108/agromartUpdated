@@ -80,6 +80,10 @@ interface UseCartReturn {
   couponCode: string | null;
 }
 
+const FREE_SHIPPING_THRESHOLD = 5000;
+const STANDARD_SHIPPING_FEE = 200;
+const GST_RATE = 0.18;
+
 /**
  * Custom hook for cart management
  */
@@ -114,11 +118,8 @@ export function useCart(): UseCartReturn {
       ? Math.round(subtotal * cart.coupon.discount * 100) / 100
       : 0;
 
-    const FREE_SHIPPING_THRESHOLD = 5000;
-    const STANDARD_SHIPPING_FEE = 200;
     const shipping = subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : STANDARD_SHIPPING_FEE;
 
-    const GST_RATE = 0.18;
     const taxableAmount = subtotal - discount;
     const tax = Math.round(taxableAmount * GST_RATE * 100) / 100;
 
@@ -171,13 +172,23 @@ export function useCart(): UseCartReturn {
                   slug: product.slug,
                   price: product.price,
                   originalPrice: product.originalPrice,
-                  image: product.image || product.images?.[0],
+                  image: product.image || product.images?.[0] || '/placeholder.png',
                   stock: product.stock || 0,
                 },
               };
             } catch (err) {
               console.error(`Failed to fetch product ${item.productId}:`, err);
-              return item;
+              return {
+                ...item,
+                product: {
+                  id: item.productId,
+                  name: 'Unknown Product',
+                  slug: '',
+                  price: 0,
+                  image: '/placeholder.png',
+                  stock: 0,
+                },
+              };
             }
           })
         );
@@ -190,6 +201,8 @@ export function useCart(): UseCartReturn {
       const message = handleApiError(err);
       setError(message);
       console.error('Failed to fetch cart:', err);
+      setItems([]);
+      setCart(null);
     } finally {
       setIsLoading(false);
     }
@@ -200,6 +213,16 @@ export function useCart(): UseCartReturn {
    */
   const addItem = useCallback(
     async (productId: string, quantity: number = 1): Promise<boolean> => {
+      if (!productId) {
+        showErrorToast('Invalid product ID', 'Error');
+        return false;
+      }
+
+      if (quantity < 1 || quantity > 50) {
+        showErrorToast('Quantity must be between 1 and 50', 'Invalid Quantity');
+        return false;
+      }
+
       setIsUpdating(true);
       setError(null);
 
@@ -230,8 +253,18 @@ export function useCart(): UseCartReturn {
    */
   const updateQuantity = useCallback(
     async (itemId: string, quantity: number): Promise<boolean> => {
+      if (!itemId) {
+        showErrorToast('Invalid item ID', 'Error');
+        return false;
+      }
+
       if (quantity < 1) {
         return removeItem(itemId);
+      }
+
+      if (quantity > 50) {
+        showErrorToast('Maximum quantity is 50', 'Invalid Quantity');
+        return false;
       }
 
       setIsUpdating(true);
@@ -263,6 +296,11 @@ export function useCart(): UseCartReturn {
    */
   const removeItem = useCallback(
     async (itemId: string): Promise<boolean> => {
+      if (!itemId) {
+        showErrorToast('Invalid item ID', 'Error');
+        return false;
+      }
+
       setIsUpdating(true);
       setError(null);
 
@@ -302,7 +340,6 @@ export function useCart(): UseCartReturn {
         throw new Error(response.data.message || 'Failed to clear cart');
       }
 
-      showSuccessToast('Cart cleared', 'Success');
       setCart(null);
       setItems([]);
       return true;
@@ -326,21 +363,30 @@ export function useCart(): UseCartReturn {
         return false;
       }
 
+      const trimmedCode = code.trim().toUpperCase();
+
       setIsUpdating(true);
       setError(null);
 
       try {
-        const response = await cartApi.applyCoupon(code);
+        const response = await cartApi.applyCoupon(trimmedCode);
 
         if (!response.data.success) {
           throw new Error(response.data.message || 'Failed to apply coupon');
         }
 
-        const couponData = response.data.data;
+        const responseData = response.data.data;
+        
+        // Calculate discount amount for display
+        let discountAmount = 0;
+        if (responseData.coupon && responseData.totals) {
+          discountAmount = responseData.totals.discount || responseData.discount || 0;
+        } else if (responseData.discount !== undefined) {
+          discountAmount = responseData.discount;
+        }
+
         showSuccessToast(
-          `Coupon applied! You saved ${
-            couponData.discount ? `₹${couponData.discount.toFixed(2)}` : ''
-          }`,
+          `Coupon applied! You saved ${discountAmount > 0 ? `₹${discountAmount.toFixed(2)}` : 'money'}`,
           'Success'
         );
 

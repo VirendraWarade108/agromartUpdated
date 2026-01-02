@@ -20,43 +20,46 @@ import {
   Truck, 
   Package,
   AlertCircle,
-  Loader
+  Loader,
+  Tag,
+  X
 } from 'lucide-react';
-import { cartApi, orderApi, productApi, handleApiError } from '@/lib/api';
+import { orderApi, handleApiError } from '@/lib/api';
 import { showErrorToast, showSuccessToast } from '@/store/uiStore';
 import { PageLoader } from '@/components/shared/LoadingSpinner';
 import { formatPrice } from '@/lib/utils';
+import useCart from '@/hooks/useCart';
 
-interface CartItem {
-  id: string;
-  productId: string;
-  quantity: number;
-  product?: {
-    name: string;
-    price: number;
-    image?: string;
-  };
-}
-
-interface Cart {
-  id: string;
-  items: CartItem[];
-  coupon?: {
-    code: string;
-    discount: number;
-  };
+interface ShippingInfo {
+  fullName: string;
+  email: string;
+  phone: string;
+  address: string;
+  city: string;
+  state: string;
+  pincode: string;
+  landmark: string;
 }
 
 export default function CheckoutPage() {
   const router = useRouter();
+  const { 
+    items: cartItems, 
+    summary, 
+    isLoading: isLoadingCart,
+    applyCoupon: applyCartCoupon,
+    removeCoupon: removeCartCoupon,
+    couponCode: activeCouponCode,
+    clearCart
+  } = useCart();
+
   const [step, setStep] = useState<1 | 2>(1);
   const [paymentMethod, setPaymentMethod] = useState('card');
   const [loading, setLoading] = useState(false);
-  const [isLoadingCart, setIsLoadingCart] = useState(true);
-  const [cart, setCart] = useState<Cart | null>(null);
-  const [cartItems, setCartItems] = useState<CartItem[]>([]);
+  const [couponInput, setCouponInput] = useState('');
+  const [isCouponLoading, setIsCouponLoading] = useState(false);
   
-  const [shippingInfo, setShippingInfo] = useState({
+  const [shippingInfo, setShippingInfo] = useState<ShippingInfo>({
     fullName: '',
     email: '',
     phone: '',
@@ -68,77 +71,6 @@ export default function CheckoutPage() {
   });
 
   const [errors, setErrors] = useState<Record<string, string>>({});
-
-  // Fetch cart from backend
-  useEffect(() => {
-    fetchCart();
-  }, []);
-
-  const fetchCart = async () => {
-    setIsLoadingCart(true);
-    try {
-      const response = await cartApi.get();
-      
-      if (!response.data.success) {
-        throw new Error(response.data.message || 'Failed to load cart');
-      }
-
-      const cartData = response.data.data;
-      setCart(cartData);
-      
-      // Fetch full product details for cart items
-      if (cartData.items && cartData.items.length > 0) {
-        const itemsWithDetails = await Promise.all(
-          cartData.items.map(async (item: CartItem) => {
-            try {
-              const productResponse = await productApi.getById(item.productId);
-              const product = productResponse.data.data;
-              return {
-                ...item,
-                product: {
-                  name: product.name,
-                  price: product.price,
-                  image: product.image || product.images?.[0] || '/placeholder.png',
-                },
-              };
-            } catch (error) {
-              console.error(`Failed to fetch product ${item.productId}:`, error);
-              return {
-                ...item,
-                product: {
-                  name: `Product ${item.productId}`,
-                  price: 0,
-                  image: '/placeholder.png',
-                },
-              };
-            }
-          })
-        );
-        setCartItems(itemsWithDetails);
-      } else {
-        setCartItems([]);
-      }
-    } catch (err) {
-      console.error('Failed to fetch cart:', err);
-      const message = handleApiError(err);
-      showErrorToast(message, 'Failed to load cart');
-      setCartItems([]);
-    } finally {
-      setIsLoadingCart(false);
-    }
-  };
-
-  // Calculate pricing
-  const subtotal = cartItems.reduce(
-    (sum, item) => sum + (item.product?.price || 0) * item.quantity, 
-    0
-  );
-  const discountAmount = cart?.coupon?.discount 
-    ? Math.round(subtotal * cart.coupon.discount * 100) / 100 
-    : 0;
-  const shippingFee = subtotal >= 5000 ? 0 : 200;
-  const tax = Math.round(((subtotal - discountAmount) * 0.18) * 100) / 100;
-  const total = subtotal - discountAmount + shippingFee + tax;
 
   const paymentMethods = [
     { 
@@ -177,7 +109,6 @@ export default function CheckoutPage() {
     const { name, value } = e.target;
     setShippingInfo({ ...shippingInfo, [name]: value });
     
-    // Clear error for this field
     if (errors[name]) {
       setErrors({ ...errors, [name]: '' });
     }
@@ -224,6 +155,28 @@ export default function CheckoutPage() {
     return Object.keys(newErrors).length === 0;
   };
 
+  const handleApplyCoupon = async () => {
+    if (!couponInput.trim()) {
+      showErrorToast('Please enter a coupon code', 'Invalid Input');
+      return;
+    }
+
+    setIsCouponLoading(true);
+    const success = await applyCartCoupon(couponInput.trim().toUpperCase());
+    
+    if (success) {
+      setCouponInput('');
+    }
+    
+    setIsCouponLoading(false);
+  };
+
+  const handleRemoveCoupon = async () => {
+    setIsCouponLoading(true);
+    await removeCartCoupon();
+    setIsCouponLoading(false);
+  };
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     
@@ -234,34 +187,52 @@ export default function CheckoutPage() {
       }
       setStep(2);
     } else {
-      // Process payment
+      // Process checkout
       setLoading(true);
       try {
-        const response = await orderApi.create({
-          shippingAddress: shippingInfo,
+        const items = cartItems.map(item => ({
+          productId: item.productId ?? item.product?.id,
+          quantity: item.quantity
+        }));
+        
+        const orderData = {
+          shippingAddress: {
+            fullName: shippingInfo.fullName,
+            email: shippingInfo.email,
+            phone: shippingInfo.phone,
+            addressLine1: shippingInfo.address,
+            landmark: shippingInfo.landmark || undefined,
+            city: shippingInfo.city,
+            state: shippingInfo.state,
+            pincode: shippingInfo.pincode,
+            country: 'India',
+            type: 'home' as const
+          },
           paymentMethod,
-          items: cartItems.map(item => ({
-            productId: item.productId,
-            quantity: item.quantity,
-            price: item.product?.price || 0,
-          })),
-        });
+          couponCode: activeCouponCode || undefined,
+          items
+        };
+
+
+
+        const response = await orderApi.create(orderData);
 
         if (!response.data.success) {
           throw new Error(response.data.message || 'Order creation failed');
         }
 
-        const order = response.data.data;
+        const order = response.data.data.order || response.data.data;
         showSuccessToast(`Order placed successfully! Order ID: ${order.id}`, 'Success');
         
-        // Clear cart
-        await cartApi.clear();
+        // Clear cart after successful order
+        await clearCart();
         
-        // Redirect to orders page
-        router.push('/dashboard/orders');
+        // Redirect to order confirmation page
+        router.push(`/orders/${order.id}`);
       } catch (err) {
         const message = handleApiError(err);
-        showErrorToast(message, 'Checkout failed');
+        showErrorToast(message, 'Checkout Failed');
+        console.error('Checkout error:', err);
       } finally {
         setLoading(false);
       }
@@ -662,28 +633,75 @@ export default function CheckoutPage() {
                 ))}
               </div>
 
+              {/* Coupon Section */}
+              <div className="mb-6 pb-6 border-b-2 border-gray-200">
+                {activeCouponCode ? (
+                  <div className="flex items-center justify-between p-4 bg-green-50 border-2 border-green-200 rounded-xl">
+                    <div className="flex items-center gap-2">
+                      <Tag className="w-5 h-5 text-green-600" />
+                      <div>
+                        <p className="text-sm font-bold text-green-900">Coupon Applied</p>
+                        <p className="text-xs text-green-700">{activeCouponCode}</p>
+                      </div>
+                    </div>
+                    <button
+                      onClick={handleRemoveCoupon}
+                      disabled={isCouponLoading}
+                      className="p-2 hover:bg-green-100 rounded-lg transition-all disabled:opacity-50"
+                    >
+                      <X className="w-5 h-5 text-green-700" />
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    <label className="block text-sm font-bold text-gray-900">
+                      Have a coupon?
+                    </label>
+                    <div className="flex gap-2">
+                      <input
+                        type="text"
+                        value={couponInput}
+                        onChange={(e) => setCouponInput(e.target.value.toUpperCase())}
+                        placeholder="Enter code"
+                        className="flex-1 px-4 py-3 border-2 border-gray-200 rounded-xl focus:outline-none focus:border-green-400 font-semibold text-gray-900"
+                        disabled={isCouponLoading}
+                      />
+                      <button
+                        onClick={handleApplyCoupon}
+                        disabled={isCouponLoading || !couponInput.trim()}
+                        className="px-6 py-3 bg-green-600 hover:bg-green-700 text-white font-bold rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                      >
+                        {isCouponLoading ? (
+                          <Loader className="w-5 h-5 animate-spin" />
+                        ) : (
+                          'Apply'
+                        )}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Price Breakdown */}
               <div className="space-y-3 pb-6 mb-6 border-b-2 border-gray-200">
                 <div className="flex justify-between text-gray-700">
                   <span className="font-semibold">Subtotal</span>
-                  <span className="font-bold">{formatPrice(subtotal)}</span>
+                  <span className="font-bold">{formatPrice(summary.subtotal)}</span>
                 </div>
-                {cart?.coupon && discountAmount > 0 && (
+                {summary.discount > 0 && (
                   <div className="flex justify-between text-green-600">
-                    <span className="font-semibold">
-                      Discount ({cart.coupon.code})
-                    </span>
-                    <span className="font-bold">-{formatPrice(discountAmount)}</span>
+                    <span className="font-semibold">Discount</span>
+                    <span className="font-bold">-{formatPrice(summary.discount)}</span>
                   </div>
                 )}
                 <div className="flex justify-between text-gray-700">
                   <span className="font-semibold">Tax (GST 18%)</span>
-                  <span className="font-bold">{formatPrice(tax)}</span>
+                  <span className="font-bold">{formatPrice(summary.tax)}</span>
                 </div>
                 <div className="flex justify-between text-gray-700">
                   <span className="font-semibold">Shipping</span>
                   <span className="font-bold text-green-600">
-                    {shippingFee === 0 ? 'FREE' : formatPrice(shippingFee)}
+                    {summary.shipping === 0 ? 'FREE' : formatPrice(summary.shipping)}
                   </span>
                 </div>
               </div>
@@ -691,7 +709,7 @@ export default function CheckoutPage() {
               {/* Total */}
               <div className="flex justify-between items-center mb-6">
                 <span className="text-xl font-black text-gray-900">Total</span>
-                <span className="text-3xl font-black text-green-600">{formatPrice(total)}</span>
+                <span className="text-3xl font-black text-green-600">{formatPrice(summary.total)}</span>
               </div>
 
               {/* Security Badge */}
