@@ -1,7 +1,7 @@
 import { Router, Request, Response } from 'express';
 import { asyncHandler } from '../middleware/errorHandler';
 import { authenticate, requireAdmin } from '../middleware/auth';
-import * as paymentService from '../services/paymentService';
+import * as paymentController from '../controllers/paymentController';
 import { verifyWebhookSignature, generateIdempotencyKey } from '../utils/signature';
 import { checkIdempotency, setIdempotency } from '../config/redis';
 import { env } from '../config/env';
@@ -11,113 +11,58 @@ const router = Router();
 /**
  * Create payment intent
  * POST /api/payment/create-intent
+ * 
+ * Protected route - requires authentication
  */
 router.post(
   '/create-intent',
   authenticate,
-  asyncHandler(async (req: Request, res: Response) => {
-    const { amount, orderId } = req.body;
-
-    if (!amount || !orderId) {
-      return res.status(400).json({
-        success: false,
-        message: 'Amount and orderId are required',
-      });
-    }
-
-    if (amount <= 0) {
-      return res.status(400).json({
-        success: false,
-        message: 'Amount must be greater than 0',
-      });
-    }
-
-    const result = await paymentService.createPaymentIntent(amount, orderId);
-
-    res.status(201).json({
-      success: true,
-      message: 'Payment intent created successfully',
-      data: result,
-    });
-  })
+  asyncHandler(paymentController.createPaymentIntent)
 );
 
 /**
  * Verify payment
  * POST /api/payment/verify
+ * 
+ * Protected route - requires authentication
  */
 router.post(
   '/verify',
   authenticate,
-  asyncHandler(async (req: Request, res: Response) => {
-    const { paymentId, orderId } = req.body;
-
-    if (!paymentId || !orderId) {
-      return res.status(400).json({
-        success: false,
-        message: 'PaymentId and orderId are required',
-      });
-    }
-
-    const result = await paymentService.verifyPayment(paymentId, orderId);
-
-    res.json({
-      success: true,
-      data: result,
-    });
-  })
+  asyncHandler(paymentController.verifyPayment)
 );
 
 /**
  * Get payment status
  * GET /api/payment/status/:orderId
+ * 
+ * Protected route - requires authentication
  */
 router.get(
   '/status/:orderId',
   authenticate,
-  asyncHandler(async (req: Request, res: Response) => {
-    const { orderId } = req.params;
-
-    const result = await paymentService.getPaymentStatus(orderId);
-
-    res.json({
-      success: true,
-      data: result,
-    });
-  })
+  asyncHandler(paymentController.getPaymentStatus)
 );
 
 /**
  * Process refund (Admin only)
  * POST /api/payment/refund
+ * 
+ * Protected route - requires admin access
  */
 router.post(
   '/refund',
   authenticate,
   requireAdmin,
-  asyncHandler(async (req: Request, res: Response) => {
-    const { orderId, amount } = req.body;
-
-    if (!orderId) {
-      return res.status(400).json({
-        success: false,
-        message: 'OrderId is required',
-      });
-    }
-
-    const result = await paymentService.processRefund(orderId, amount);
-
-    res.json({
-      success: true,
-      message: 'Refund processed successfully',
-      data: result,
-    });
-  })
+  asyncHandler(paymentController.processRefund)
 );
 
 /**
  * Payment webhook
  * POST /api/payment/webhook
+ * 
+ * Public endpoint - uses signature verification
+ * Handles incoming webhook events from payment provider
  */
 router.post(
   '/webhook',
@@ -127,13 +72,16 @@ router.post(
     if (!signature) {
       return res.status(400).json({
         success: false,
-        message: 'Missing signature header',
+        error: {
+          code: 'INVALID_SIGNATURE',
+          message: 'Missing signature header',
+        },
       });
     }
 
     const rawBody = JSON.stringify(req.body);
 
-    // Verify signature
+    // Verify webhook signature
     const isValid = verifyWebhookSignature(
       rawBody,
       signature,
@@ -143,44 +91,76 @@ router.post(
     if (!isValid) {
       return res.status(401).json({
         success: false,
-        message: 'Invalid signature',
+        error: {
+          code: 'INVALID_SIGNATURE',
+          message: 'Invalid webhook signature',
+        },
       });
     }
 
-    // Extract event
+    // Extract event data
     const event = req.body;
     const eventId = event.id || `evt_${Date.now()}`;
 
-    // Check idempotency
+    // Check idempotency to prevent duplicate processing
     const idempotencyKey = generateIdempotencyKey(eventId);
     const alreadyProcessed = await checkIdempotency(idempotencyKey);
 
     if (alreadyProcessed) {
-      return res.json({
+      return res.status(200).json({
         success: true,
-        message: 'Event already processed',
+        data: {
+          received: true,
+          eventId,
+          message: 'Event already processed',
+        },
       });
     }
 
-    // Process webhook
+    // Process webhook using controller
     try {
-      await paymentService.handlePaymentWebhook(event);
+      await paymentController.handleWebhook(req, res);
 
-      // Mark as processed
+      // Mark as processed in Redis (24 hours expiry)
       await setIdempotency(idempotencyKey, 'processed');
-
-      res.json({
-        success: true,
-        message: 'Webhook processed successfully',
-      });
     } catch (error: any) {
       console.error('Webhook processing error:', error);
-      res.status(500).json({
-        success: false,
-        message: error.message || 'Webhook processing failed',
-      });
+      
+      // Don't mark as processed if it failed
+      // This allows retry on next webhook attempt
+      throw error;
     }
   })
 );
+
+/**
+ * Test endpoints (Development only)
+ * These should be removed or disabled in production
+ */
+if (env.isDevelopment) {
+  /**
+   * Simulate payment success
+   * POST /api/payment/simulate-success
+   * 
+   * Test endpoint to simulate successful payment
+   */
+  router.post(
+    '/simulate-success',
+    authenticate,
+    asyncHandler(paymentController.simulatePaymentSuccess)
+  );
+
+  /**
+   * Simulate payment failure
+   * POST /api/payment/simulate-failure
+   * 
+   * Test endpoint to simulate failed payment
+   */
+  router.post(
+    '/simulate-failure',
+    authenticate,
+    asyncHandler(paymentController.simulatePaymentFailure)
+  );
+}
 
 export default router;
