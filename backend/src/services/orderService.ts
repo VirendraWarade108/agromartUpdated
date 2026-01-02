@@ -1,0 +1,596 @@
+import prisma from '../config/database';
+import { AppError } from '../middleware/errorHandler';
+import { getCart, clearCart, calculateCartTotals, validateCartStock } from './cartService';
+import * as couponService from './couponService';
+import * as productService from './productService';
+import * as orderTrackingService from './orderTrackingService';
+
+/**
+ * Calculate shipping fee
+ */
+const calculateShipping = (subtotal: number): number => {
+  const FREE_SHIPPING_THRESHOLD = 5000;
+  const STANDARD_SHIPPING_FEE = 200;
+  
+  return subtotal >= FREE_SHIPPING_THRESHOLD ? 0 : STANDARD_SHIPPING_FEE;
+};
+
+/**
+ * Calculate tax (18% GST)
+ */
+const calculateTax = (subtotal: number, discount: number): number => {
+  const GST_RATE = 0.18;
+  const taxableAmount = subtotal - discount;
+  return Math.round(taxableAmount * GST_RATE * 100) / 100;
+};
+
+/**
+ * Create order from cart (Checkout)
+ */
+export const createOrder = async (
+  userId: string,
+  data: {
+    shippingAddress?: any;
+    paymentMethod?: string;
+    couponCode?: string;
+  }
+) => {
+  // Use transaction to ensure atomicity
+  return await prisma.$transaction(async (tx) => {
+    // Get user's cart
+    const cart = await tx.cart.findUnique({
+      where: { userId },
+      include: {
+        items: {
+          include: {
+            product: true,
+          },
+        },
+      },
+    });
+
+    if (!cart || !cart.items || cart.items.length === 0) {
+      throw new AppError('Cart is empty', 400);
+    }
+
+    // Validate and reserve stock atomically
+    for (const item of cart.items) {
+      const product = await tx.product.findUnique({
+        where: { id: item.productId },
+      });
+
+      if (!product) {
+        throw new AppError(`Product not found: ${item.productId}`, 404);
+      }
+
+      if (!product.stock || product.stock < item.quantity) {
+        throw new AppError(
+          `Product "${product.name}" has insufficient stock (requested: ${item.quantity}, available: ${product.stock || 0})`,
+          400
+        );
+      }
+
+      // Decrement stock
+      await tx.product.update({
+        where: { id: item.productId },
+        data: {
+          stock: {
+            decrement: item.quantity,
+          },
+        },
+      });
+    }
+
+    // Calculate subtotal
+    const subtotal = cart.items.reduce(
+      (sum, item) => sum + item.product.price * item.quantity,
+      0
+    );
+
+    // Apply coupon discount
+    let couponDiscount = 0;
+    let couponData: any = undefined;
+    let couponId: string | undefined = undefined;
+
+    if (data.couponCode) {
+      try {
+        const couponResult = await couponService.validateCoupon(
+          data.couponCode,
+          subtotal
+        );
+
+        couponDiscount = couponResult.discountAmount;
+        couponId = couponResult.coupon.id;
+
+        couponData = {
+          code: couponResult.coupon.code,
+          type: couponResult.coupon.type,
+          value: couponResult.coupon.value,
+          discount: couponDiscount,
+        };
+      } catch (error: any) {
+        throw new AppError(error.message || 'Invalid coupon', 400);
+      }
+    }
+    
+    const shippingFee = calculateShipping(subtotal);
+    const tax = calculateTax(subtotal, couponDiscount);
+    const total = subtotal - couponDiscount + shippingFee + tax;
+
+    // Create order
+    const order = await tx.order.create({
+      data: {
+        userId,
+        total,
+        status: 'pending',
+        ...(couponData && { coupon: couponData }),
+        items: {
+          create: cart.items.map((item) => ({
+            productId: item.productId,
+            quantity: item.quantity,
+            price: item.product.price,
+          })),
+        },
+      },
+      include: {
+        items: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                image: true,
+                price: true,
+              },
+            },
+          },
+        },
+      },
+    });
+
+    // Increment coupon usage
+    if (couponId) {
+      await couponService.applyCoupon(couponId);
+    }
+
+    // Create initial tracking entry
+    await tx.orderTracking.create({
+      data: {
+        orderId: order.id,
+        status: 'pending',
+        description: 'Order placed successfully',
+      },
+    });
+
+    // Clear cart
+    await tx.cartItem.deleteMany({
+      where: { cartId: cart.id },
+    });
+
+    return order;
+  });
+};
+
+/**
+ * Get user's orders
+ */
+export const getUserOrders = async (
+  userId: string,
+  options: { page?: number; limit?: number; status?: string } = {}
+) => {
+  const { page = 1, limit = 20, status } = options;
+  const skip = (page - 1) * limit;
+
+  const where: any = { userId };
+  if (status) {
+    where.status = status;
+  }
+
+  const [orders, total] = await Promise.all([
+    prisma.order.findMany({
+      where,
+      skip,
+      take: limit,
+      include: {
+        items: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                image: true,
+                price: true,
+              },
+            },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.order.count({ where }),
+  ]);
+
+  return {
+    orders,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+};
+
+/**
+ * Get single order by ID
+ */
+export const getOrderById = async (orderId: string, userId?: string) => {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      items: {
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              image: true,
+              price: true,
+            },
+          },
+        },
+      },
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          phone: true,
+        },
+      },
+    },
+  });
+
+  if (!order) {
+    throw new AppError('Order not found', 404);
+  }
+
+  if (userId && order.userId !== userId) {
+    throw new AppError('Unauthorized to view this order', 403);
+  }
+
+  return order;
+};
+
+/**
+ * Get all orders (Admin only)
+ */
+export const getAllOrders = async (options: {
+  page?: number;
+  limit?: number;
+  status?: string;
+} = {}) => {
+  const { page = 1, limit = 20, status } = options;
+  const skip = (page - 1) * limit;
+
+  const where: any = {};
+  if (status) {
+    where.status = status;
+  }
+
+  const [orders, total] = await Promise.all([
+    prisma.order.findMany({
+      where,
+      skip,
+      take: limit,
+      include: {
+        items: {
+          include: {
+            product: {
+              select: {
+                id: true,
+                name: true,
+                slug: true,
+                image: true,
+                price: true,
+              },
+            },
+          },
+        },
+        user: {
+          select: {
+            id: true,
+            fullName: true,
+            email: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    }),
+    prisma.order.count({ where }),
+  ]);
+
+  return {
+    orders,
+    pagination: {
+      total,
+      page,
+      limit,
+      totalPages: Math.ceil(total / limit),
+    },
+  };
+};
+
+/**
+ * Update order status (Admin only)
+ */
+export const updateOrderStatus = async (orderId: string, status: string) => {
+  const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'paid', 'failed'];
+
+  if (!validStatuses.includes(status)) {
+    throw new AppError('Invalid order status', 400);
+  }
+
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+  });
+
+  if (!order) {
+    throw new AppError('Order not found', 404);
+  }
+
+  const updatedOrder = await prisma.order.update({
+    where: { id: orderId },
+    data: { status },
+    include: {
+      items: {
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              image: true,
+              price: true,
+            },
+          },
+        },
+      },
+    },
+  });
+
+  // Add tracking entry
+  await orderTrackingService.addTrackingUpdate({
+    orderId,
+    status,
+    description: `Order status updated to ${status}`,
+  });
+
+  return updatedOrder;
+};
+
+/**
+ * Cancel order
+ */
+export const cancelOrder = async (orderId: string, userId: string) => {
+  return await prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+
+    if (!order) {
+      throw new AppError('Order not found', 404);
+    }
+
+    if (order.userId !== userId) {
+      throw new AppError('Unauthorized to cancel this order', 403);
+    }
+
+    if (order.status === 'shipped' || order.status === 'delivered') {
+      throw new AppError('Cannot cancel order after it has been shipped', 400);
+    }
+
+    if (order.status === 'cancelled') {
+      throw new AppError('Order is already cancelled', 400);
+    }
+
+    // Update order status
+    const updatedOrder = await tx.order.update({
+      where: { id: orderId },
+      data: { status: 'cancelled' },
+    });
+
+    // Restore stock
+    for (const item of order.items) {
+      await tx.product.update({
+        where: { id: item.productId },
+        data: {
+          stock: {
+            increment: item.quantity,
+          },
+        },
+      });
+    }
+
+    // Add tracking entry
+    await tx.orderTracking.create({
+      data: {
+        orderId,
+        status: 'cancelled',
+        description: 'Order cancelled by user',
+      },
+    });
+
+    return updatedOrder;
+  });
+};
+
+/**
+ * Refund order (Admin only)
+ */
+export const refundOrder = async (orderId: string, refundAmount?: number) => {
+  return await prisma.$transaction(async (tx) => {
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+
+    if (!order) {
+      throw new AppError('Order not found', 404);
+    }
+
+    if (order.status !== 'paid' && order.status !== 'delivered') {
+      throw new AppError('Order cannot be refunded in current status', 400);
+    }
+
+    const finalRefundAmount = refundAmount || order.total;
+
+    if (finalRefundAmount > order.total) {
+      throw new AppError('Refund amount cannot exceed order total', 400);
+    }
+
+    // Update order status
+    const updatedOrder = await tx.order.update({
+      where: { id: orderId },
+      data: { status: 'refunded' },
+    });
+
+    // Restore stock
+    for (const item of order.items) {
+      await tx.product.update({
+        where: { id: item.productId },
+        data: {
+          stock: {
+            increment: item.quantity,
+          },
+        },
+      });
+    }
+
+    // Update payment intent
+    await tx.paymentIntent.updateMany({
+      where: { orderId },
+      data: { status: 'refunded' },
+    });
+
+    // Add tracking entry
+    await tx.orderTracking.create({
+      data: {
+        orderId,
+        status: 'refunded',
+        description: `Order refunded (amount: ₹${finalRefundAmount})`,
+      },
+    });
+
+    return {
+      order: updatedOrder,
+      refundAmount: finalRefundAmount,
+    };
+  });
+};
+
+/**
+ * Get order invoice
+ */
+export const getOrderInvoice = async (orderId: string, userId: string) => {
+  const order = await prisma.order.findUnique({
+    where: { id: orderId },
+    include: {
+      items: {
+        include: {
+          product: {
+            select: {
+              id: true,
+              name: true,
+              slug: true,
+              image: true,
+              price: true,
+            },
+          },
+        },
+      },
+      user: {
+        select: {
+          id: true,
+          fullName: true,
+          email: true,
+          phone: true,
+        },
+      },
+    },
+  });
+
+  if (!order) {
+    throw new AppError('Order not found', 404);
+  }
+
+  if (order.userId !== userId) {
+    throw new AppError('Unauthorized to view this invoice', 403);
+  }
+
+  const subtotal = order.items.reduce(
+    (sum, item) => sum + item.price * item.quantity,
+    0
+  );
+
+  const couponDiscount =
+    order.coupon && typeof order.coupon === 'object' && 'discount' in order.coupon
+      ? (order.coupon as any).discount
+      : 0;
+
+  const tax = calculateTax(subtotal, couponDiscount);
+  const shippingFee = calculateShipping(subtotal);
+  const total = order.total;
+
+  const invoice = {
+    invoiceNumber: `INV-${order.id.slice(-8).toUpperCase()}`,
+    orderNumber: order.id,
+    invoiceDate: order.createdAt,
+    dueDate: order.createdAt,
+    status: order.status,
+
+    customer: {
+      id: order.user.id,
+      name: order.user.fullName,
+      email: order.user.email,
+      phone: order.user.phone || 'N/A',
+    },
+
+    items: order.items.map((item) => ({
+      id: item.id,
+      productId: item.product.id,
+      name: item.product.name,
+      slug: item.product.slug,
+      image: item.product.image,
+      quantity: item.quantity,
+      unitPrice: item.price,
+      total: item.price * item.quantity,
+    })),
+
+    summary: {
+      subtotal,
+      discount: couponDiscount,
+      tax,
+      shipping: shippingFee,
+      total,
+    },
+
+    ...(order.coupon && {
+      coupon: order.coupon,
+    }),
+
+    company: {
+      name: 'AgroMart',
+      address: 'Agricultural Market Complex, India',
+      email: 'support@agromart.com',
+      phone: '+91-1234567890',
+      website: 'https://agromart.com',
+    },
+  };
+
+  return invoice;
+};
