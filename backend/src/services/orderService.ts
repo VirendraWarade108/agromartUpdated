@@ -27,6 +27,7 @@ const calculateTax = (subtotal: number, discount: number): number => {
 
 /**
  * Create order from cart (Checkout)
+ * Stock is decremented here atomically - NOT in payment webhooks
  */
 export const createOrder = async (
   userId: string,
@@ -71,7 +72,7 @@ export const createOrder = async (
         );
       }
 
-      // Decrement stock
+      // Decrement stock immediately during order creation
       await tx.product.update({
         where: { id: item.productId },
         data: {
@@ -375,6 +376,7 @@ export const updateOrderStatus = async (orderId: string, status: OrderStatus) =>
 
 /**
  * Cancel order
+ * Restores stock when order is cancelled
  */
 export const cancelOrder = async (orderId: string, userId: string) => {
   return await prisma.$transaction(async (tx) => {
@@ -405,7 +407,7 @@ export const cancelOrder = async (orderId: string, userId: string) => {
       data: { status: 'cancelled' as OrderStatus },
     });
 
-    // Restore stock
+    // Restore stock (increment back what was decremented during createOrder)
     for (const item of order.items) {
       await tx.product.update({
         where: { id: item.productId },
@@ -432,6 +434,7 @@ export const cancelOrder = async (orderId: string, userId: string) => {
 
 /**
  * Refund order (Admin only)
+ * Restores stock when order is refunded
  */
 export const refundOrder = async (orderId: string, refundAmount?: number) => {
   return await prisma.$transaction(async (tx) => {
@@ -460,7 +463,7 @@ export const refundOrder = async (orderId: string, refundAmount?: number) => {
       data: { status: 'refunded' as OrderStatus },
     });
 
-    // Restore stock
+    // Restore stock (increment back what was decremented during createOrder)
     for (const item of order.items) {
       await tx.product.update({
         where: { id: item.productId },

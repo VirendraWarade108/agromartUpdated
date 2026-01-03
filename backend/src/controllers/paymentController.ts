@@ -281,9 +281,36 @@ export const handleWebhook = async (
       return;
     }
 
-    // Process webhook (signature verification happens in route)
+    // Validate event data object
+    if (!event.data || !event.data.object) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Invalid webhook event data structure',
+        },
+      });
+      return;
+    }
+
+    // Validate required fields in event data
+    const eventData = event.data.object;
+    if (!eventData.id) {
+      res.status(400).json({
+        success: false,
+        error: {
+          code: 'VALIDATION_ERROR',
+          message: 'Missing payment ID in webhook event',
+        },
+      });
+      return;
+    }
+
+    // Process webhook (signature verification happens in route middleware)
     await paymentService.handlePaymentWebhook(event);
 
+    // Always return 200 for successfully received webhooks
+    // Even if processing had issues, we don't want the provider to retry
     res.status(200).json({
       success: true,
       data: {
@@ -294,22 +321,31 @@ export const handleWebhook = async (
   } catch (error: any) {
     console.error('Webhook processing error:', error);
 
+    // For webhook endpoints, we typically return 200 even on errors
+    // to prevent the payment provider from retrying
+    // Log the error but acknowledge receipt
     if (error instanceof AppError) {
-      res.status(error.statusCode).json({
+      // Log but still return 200 to prevent retries
+      console.error(`Webhook AppError (${error.statusCode}):`, error.message);
+      
+      res.status(200).json({
         success: false,
         error: {
-          code: 'PAYMENT_FAILED',
-          message: error.message,
+          code: 'WEBHOOK_PROCESSING_ERROR',
+          message: 'Webhook received but processing encountered an issue',
         },
       });
       return;
     }
 
-    res.status(500).json({
+    // For unexpected errors, also return 200 to prevent infinite retries
+    console.error('Webhook unexpected error:', error.message || error);
+    
+    res.status(200).json({
       success: false,
       error: {
-        code: 'INTERNAL_ERROR',
-        message: error.message || 'Webhook processing failed',
+        code: 'WEBHOOK_PROCESSING_ERROR',
+        message: 'Webhook received but processing encountered an issue',
       },
     });
   }

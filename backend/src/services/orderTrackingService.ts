@@ -28,6 +28,7 @@ export const getOrderTracking = async (orderId: string, userId?: string) => {
 
 /**
  * Add tracking update (Admin)
+ * Validates status transitions and updates order status
  */
 export const addTrackingUpdate = async (trackingData: {
   orderId: string;
@@ -36,6 +37,21 @@ export const addTrackingUpdate = async (trackingData: {
   description: string;
   metadata?: any;
 }) => {
+  const validStatuses: OrderStatus[] = [
+    'pending',
+    'paid',
+    'processing',
+    'shipped',
+    'delivered',
+    'cancelled',
+    'refunded',
+    'failed'
+  ];
+
+  if (!validStatuses.includes(trackingData.status)) {
+    throw new AppError(`Invalid order status: ${trackingData.status}`, 400);
+  }
+
   const order = await prisma.order.findUnique({
     where: { id: trackingData.orderId },
   });
@@ -44,6 +60,7 @@ export const addTrackingUpdate = async (trackingData: {
     throw new AppError('Order not found', 404);
   }
 
+  // Create tracking entry
   const tracking = await prisma.orderTracking.create({
     data: {
       orderId: trackingData.orderId,
@@ -54,6 +71,7 @@ export const addTrackingUpdate = async (trackingData: {
     },
   });
 
+  // Update order status
   await prisma.order.update({
     where: { id: trackingData.orderId },
     data: { status: trackingData.status },
@@ -82,6 +100,21 @@ export const getLatestTracking = async (orderId: string) => {
  * Get all orders by status (Admin)
  */
 export const getOrdersByStatus = async (status: OrderStatus) => {
+  const validStatuses: OrderStatus[] = [
+    'pending',
+    'paid',
+    'processing',
+    'shipped',
+    'delivered',
+    'cancelled',
+    'refunded',
+    'failed'
+  ];
+
+  if (!validStatuses.includes(status)) {
+    throw new AppError(`Invalid order status: ${status}`, 400);
+  }
+
   const orders = await prisma.order.findMany({
     where: { status },
     include: {
@@ -105,6 +138,7 @@ export const getOrdersByStatus = async (status: OrderStatus) => {
 
 /**
  * Bulk update order status (Admin)
+ * Validates each status before updating
  */
 export const bulkUpdateOrderStatus = async (
   updates: Array<{
@@ -114,9 +148,29 @@ export const bulkUpdateOrderStatus = async (
     location?: string;
   }>
 ) => {
+  const validStatuses: OrderStatus[] = [
+    'pending',
+    'paid',
+    'processing',
+    'shipped',
+    'delivered',
+    'cancelled',
+    'refunded',
+    'failed'
+  ];
+
   const results = await Promise.all(
     updates.map(async (update) => {
       try {
+        // Validate status
+        if (!validStatuses.includes(update.status)) {
+          return {
+            success: false,
+            orderId: update.orderId,
+            error: `Invalid status: ${update.status}`,
+          };
+        }
+
         const tracking = await addTrackingUpdate({
           orderId: update.orderId,
           status: update.status,
@@ -147,11 +201,12 @@ export const bulkUpdateOrderStatus = async (
 
 /**
  * Get tracking timeline with estimated delivery
+ * Uses canonical order status flow
  */
 export const getTrackingTimeline = async (orderId: string, userId?: string) => {
   const tracking = await getOrderTracking(orderId, userId);
 
-  // Updated status flow to match canonical OrderStatus
+  // Canonical status flow for successful orders
   const statusFlow: OrderStatus[] = [
     'pending',
     'paid',
@@ -171,11 +226,12 @@ export const getTrackingTimeline = async (orderId: string, userId?: string) => {
     };
   });
 
+  // Calculate estimated delivery from shipped date
   const shippedEntry = tracking.find((t) => t.status === 'shipped');
   let estimatedDelivery: Date | null = null;
   if (shippedEntry) {
     const deliveryDate = new Date(shippedEntry.timestamp);
-    deliveryDate.setDate(deliveryDate.getDate() + 4);
+    deliveryDate.setDate(deliveryDate.getDate() + 4); // 4 days from shipped
     estimatedDelivery = deliveryDate;
   }
 

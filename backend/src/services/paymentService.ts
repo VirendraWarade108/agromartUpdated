@@ -103,13 +103,6 @@ export const createPaymentIntent = async (
       },
     });
 
-    // Add tracking entry
-    await orderTrackingService.addTrackingUpdate({
-      orderId,
-      status: 'payment_pending',
-      description: 'Payment intent created',
-    });
-
     return {
       id: paymentIntent.paymentId,
       amount: paymentIntent.amount,
@@ -345,17 +338,26 @@ export const processRefund = async (
 export const handlePaymentWebhook = async (
   event: WebhookEvent
 ): Promise<void> => {
+  const { id: eventId, type, data } = event;
+  const paymentData = data.object;
+  const paymentId = paymentData.id;
+  const orderId = paymentData.metadata?.orderId;
+
+  if (!orderId) {
+    console.error('Webhook event missing orderId in metadata:', eventId);
+    throw new AppError('Missing orderId in webhook metadata', 400);
+  }
+
+  // Check idempotency - if this event was already processed, return early
+  const idempotencyKey = `webhook:${eventId}`;
+  const alreadyProcessed = await checkIdempotency(idempotencyKey);
+  
+  if (alreadyProcessed) {
+    console.log(`Webhook event ${eventId} already processed, skipping`);
+    return;
+  }
+
   try {
-    const { id: eventId, type, data } = event;
-    const paymentData = data.object;
-    const paymentId = paymentData.id;
-    const orderId = paymentData.metadata?.orderId;
-
-    if (!orderId) {
-      console.error('Webhook event missing orderId in metadata:', eventId);
-      throw new AppError('Missing orderId in webhook metadata', 400);
-    }
-
     // Handle different event types
     switch (type) {
       case 'payment_intent.created':
@@ -382,6 +384,9 @@ export const handlePaymentWebhook = async (
       default:
         console.log(`Unhandled webhook event type: ${type}`);
     }
+
+    // Mark event as processed
+    await setIdempotency(idempotencyKey, 'processed');
   } catch (error: any) {
     console.error('Webhook handling error:', error);
     throw new AppError(
@@ -406,7 +411,17 @@ const handlePaymentCreated = async (
     });
 
     if (existing) {
-      return; // Already processed
+      console.log(`Payment ${paymentId} already exists, skipping creation`);
+      return;
+    }
+
+    // Verify order exists
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new AppError('Order not found', 404);
     }
 
     // Create payment intent
@@ -421,15 +436,6 @@ const handlePaymentCreated = async (
         },
       },
     });
-
-    // Add tracking
-    await tx.orderTracking.create({
-      data: {
-        orderId,
-        status: 'payment_created',
-        description: 'Payment created',
-      },
-    });
   });
 };
 
@@ -442,11 +448,31 @@ const handlePaymentProcessing = async (
   paymentData: any
 ): Promise<void> => {
   await prisma.$transaction(async (tx) => {
+    // Verify order exists and get current status
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new AppError('Order not found', 404);
+    }
+
+    // Only update if order is in a valid state for processing
+    if (order.status !== 'pending') {
+      console.log(`Order ${orderId} is in ${order.status} state, cannot transition to processing`);
+      return;
+    }
+
     // Update payment status
-    await tx.paymentIntent.updateMany({
+    const updated = await tx.paymentIntent.updateMany({
       where: { paymentId },
       data: { status: 'processing' },
     });
+
+    if (updated.count === 0) {
+      console.log(`Payment ${paymentId} not found, skipping processing update`);
+      return;
+    }
 
     // Update order status
     await tx.order.update({
@@ -474,8 +500,34 @@ const handlePaymentSucceeded = async (
   paymentData: any
 ): Promise<void> => {
   await prisma.$transaction(async (tx) => {
+    // Get order with items
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+      include: { items: true },
+    });
+
+    if (!order) {
+      throw new AppError('Order not found', 404);
+    }
+
+    // Validate order state - cannot mark as paid if already in terminal state
+    if (order.status === 'paid' || order.status === 'refunded' || order.status === 'cancelled') {
+      console.log(`Order ${orderId} is already in ${order.status} state, cannot mark as paid`);
+      return;
+    }
+
+    // Check if payment already succeeded
+    const existingPayment = await tx.paymentIntent.findUnique({
+      where: { paymentId },
+    });
+
+    if (existingPayment && existingPayment.status === 'succeeded') {
+      console.log(`Payment ${paymentId} already marked as succeeded, skipping`);
+      return;
+    }
+
     // Update payment status
-    await tx.paymentIntent.updateMany({
+    const updated = await tx.paymentIntent.updateMany({
       where: { paymentId },
       data: {
         status: 'succeeded',
@@ -485,13 +537,17 @@ const handlePaymentSucceeded = async (
       },
     });
 
+    if (updated.count === 0) {
+      throw new AppError('Payment intent not found', 404);
+    }
+
     // Update order status to paid
     await tx.order.update({
       where: { id: orderId },
       data: { status: 'paid' },
     });
 
-    // Add tracking
+    // Add single tracking entry
     await tx.orderTracking.create({
       data: {
         orderId,
@@ -521,8 +577,14 @@ const handlePaymentFailed = async (
       throw new AppError('Order not found', 404);
     }
 
+    // Only fail if order is in pending or processing state
+    if (order.status !== 'pending' && order.status !== 'processing') {
+      console.log(`Order ${orderId} is in ${order.status} state, cannot mark as failed`);
+      return;
+    }
+
     // Update payment status
-    await tx.paymentIntent.updateMany({
+    const updated = await tx.paymentIntent.updateMany({
       where: { paymentId },
       data: {
         status: 'failed',
@@ -532,6 +594,11 @@ const handlePaymentFailed = async (
         },
       },
     });
+
+    if (updated.count === 0) {
+      console.log(`Payment ${paymentId} not found, skipping failure update`);
+      return;
+    }
 
     // Update order status
     await tx.order.update({
@@ -573,8 +640,17 @@ const handlePaymentRefunded = async (
   await prisma.$transaction(async (tx) => {
     const refundAmount = paymentData.amount_refunded / 100; // Convert from cents
 
+    // Verify order exists
+    const order = await tx.order.findUnique({
+      where: { id: orderId },
+    });
+
+    if (!order) {
+      throw new AppError('Order not found', 404);
+    }
+
     // Update payment status
-    await tx.paymentIntent.updateMany({
+    const updated = await tx.paymentIntent.updateMany({
       where: { paymentId },
       data: {
         status: 'refunded',
@@ -584,6 +660,11 @@ const handlePaymentRefunded = async (
         },
       },
     });
+
+    if (updated.count === 0) {
+      console.log(`Payment ${paymentId} not found, skipping refund update`);
+      return;
+    }
 
     // Update order status
     await tx.order.update({
