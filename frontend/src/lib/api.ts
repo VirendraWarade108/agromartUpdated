@@ -44,6 +44,7 @@ const refreshAccessToken = async (): Promise<string | null> => {
   refreshPromise = (async () => {
     const refreshToken = localStorage.getItem('refresh_token');
     if (!refreshToken) {
+      console.warn('No refresh token available');
       return null;
     }
 
@@ -55,15 +56,28 @@ const refreshAccessToken = async (): Promise<string | null> => {
       if (response.data?.data?.accessToken) {
         const newAccessToken = response.data.data.accessToken;
         localStorage.setItem('access_token', newAccessToken);
+        
+        // Update refresh token if provided
+        if (response.data.data.refreshToken) {
+          localStorage.setItem('refresh_token', response.data.data.refreshToken);
+        }
+        
         return newAccessToken;
       } else {
         throw new Error('Invalid refresh response');
       }
     } catch (error) {
-      // Refresh failed, clear auth
+      console.error('Token refresh failed:', error);
+      
+      // Clear auth and redirect to login
       localStorage.removeItem('access_token');
       localStorage.removeItem('refresh_token');
-      window.location.href = '/auth/login';
+      
+      // Only redirect if we're not already on the login page
+      if (typeof window !== 'undefined' && !window.location.pathname.includes('/auth/login')) {
+        window.location.href = '/auth/login';
+      }
+      
       return null;
     } finally {
       refreshPromise = null;
@@ -81,6 +95,7 @@ apiClient.interceptors.response.use(
   async (error: AxiosError) => {
     const originalConfig = error.config as AxiosRequestConfig & { _retry?: boolean };
 
+    // Handle 401 Unauthorized - attempt token refresh
     if (error.response?.status === 401 && !originalConfig?._retry) {
       originalConfig._retry = true;
       
@@ -92,23 +107,64 @@ apiClient.interceptors.response.use(
       }
     }
 
+    // Handle 429 Rate Limit
+    if (error.response?.status === 429) {
+      const retryAfter = error.response.headers['retry-after'];
+      console.warn(`Rate limited. Retry after: ${retryAfter} seconds`);
+    }
+
+    // Handle 403 Forbidden
+    if (error.response?.status === 403) {
+      console.error('Access forbidden. You do not have permission for this action.');
+    }
+
+    // Handle 404 Not Found
+    if (error.response?.status === 404) {
+      console.warn('Resource not found:', originalConfig?.url);
+    }
+
+    // Handle 500+ Server Errors
+    if (error.response?.status && error.response.status >= 500) {
+      console.error('Server error occurred:', error.response.status);
+    }
+
     return Promise.reject(error);
   }
 );
 
 /**
- * API Error handler with better response validation
+ * API Error handler with comprehensive error extraction
  */
 export const handleApiError = (error: any): string => {
   // Handle axios error response
   if (error.response) {
     const data = error.response.data;
-    return data?.message || data?.error || 'An error occurred';
+    
+    // Try multiple paths to extract error message
+    if (data?.error?.message) {
+      return data.error.message;
+    }
+    
+    if (data?.message) {
+      return data.message;
+    }
+    
+    if (data?.error) {
+      // If error is a string
+      if (typeof data.error === 'string') {
+        return data.error;
+      }
+      // If error is an object without message
+      return 'An error occurred';
+    }
+    
+    // Fallback to status text
+    return error.response.statusText || 'An error occurred';
   }
   
   // Handle network error (no response)
   if (error.request && !error.response) {
-    return 'No response from server. Check your connection.';
+    return 'No response from server. Please check your internet connection.';
   }
   
   // Handle request setup error
@@ -116,7 +172,39 @@ export const handleApiError = (error: any): string => {
     return 'Network error. Please check your internet connection.';
   }
   
+  // Handle timeout
+  if (error.code === 'ECONNABORTED') {
+    return 'Request timeout. Please try again.';
+  }
+  
   return error.message || 'An unexpected error occurred';
+};
+
+/**
+ * Extract error code from API error
+ */
+export const getErrorCode = (error: any): string | null => {
+  if (error.response?.data?.error?.code) {
+    return error.response.data.error.code;
+  }
+  return null;
+};
+
+/**
+ * Check if error is a specific type
+ */
+export const isErrorType = (error: any, code: string): boolean => {
+  return getErrorCode(error) === code;
+};
+
+/**
+ * Extract error details from API error
+ */
+export const getErrorDetails = (error: any): any => {
+  if (error.response?.data?.error?.details) {
+    return error.response.data.error.details;
+  }
+  return null;
 };
 
 // ============================================

@@ -5,6 +5,10 @@ import * as paymentController from '../controllers/paymentController';
 import { verifyWebhookSignature, generateIdempotencyKey } from '../utils/signature';
 import { checkIdempotency, setIdempotency } from '../config/redis';
 import { env } from '../config/env';
+import {
+  paymentLimiter,
+  paymentVerifyLimiter,
+} from '../middleware/rateLimiter';
 
 const router = Router();
 
@@ -12,11 +16,13 @@ const router = Router();
  * Create payment intent
  * POST /api/payment/create-intent
  * 
+ * Rate Limited: 10 payments per hour per user
  * Protected route - requires authentication
  */
 router.post(
   '/create-intent',
   authenticate,
+  paymentLimiter,
   asyncHandler(paymentController.createPaymentIntent)
 );
 
@@ -24,11 +30,13 @@ router.post(
  * Verify payment
  * POST /api/payment/verify
  * 
+ * Rate Limited: 20 verifications per hour per user
  * Protected route - requires authentication
  */
 router.post(
   '/verify',
   authenticate,
+  paymentVerifyLimiter,
   asyncHandler(paymentController.verifyPayment)
 );
 
@@ -36,6 +44,7 @@ router.post(
  * Get payment status
  * GET /api/payment/status/:orderId
  * 
+ * Rate Limited: No (read-only operation)
  * Protected route - requires authentication
  */
 router.get(
@@ -48,6 +57,7 @@ router.get(
  * Process refund (Admin only)
  * POST /api/payment/refund
  * 
+ * Rate Limited: No (admin only, already protected)
  * Protected route - requires admin access
  */
 router.post(
@@ -61,6 +71,7 @@ router.post(
  * Payment webhook
  * POST /api/payment/webhook
  * 
+ * Rate Limited: No (external service callback)
  * Public endpoint - uses signature verification
  * Handles incoming webhook events from payment provider
  */
@@ -142,6 +153,7 @@ if (env.isDevelopment) {
    * Simulate payment success
    * POST /api/payment/simulate-success
    * 
+   * Rate Limited: No (development only)
    * Test endpoint to simulate successful payment
    */
   router.post(
@@ -154,6 +166,7 @@ if (env.isDevelopment) {
    * Simulate payment failure
    * POST /api/payment/simulate-failure
    * 
+   * Rate Limited: No (development only)
    * Test endpoint to simulate failed payment
    */
   router.post(
@@ -162,5 +175,28 @@ if (env.isDevelopment) {
     asyncHandler(paymentController.simulatePaymentFailure)
   );
 }
+
+/**
+ * ============================================
+ * ROUTE SUMMARY WITH PROTECTION
+ * ============================================
+ * AUTHENTICATED (Rate Limited):
+ *   POST   /payment/create-intent   - 10 req/hour [AUTH REQUIRED]
+ *   POST   /payment/verify           - 20 req/hour [AUTH REQUIRED]
+ * 
+ * AUTHENTICATED (No Rate Limits):
+ *   GET    /payment/status/:orderId  - Read-only [AUTH REQUIRED]
+ * 
+ * ADMIN (No Rate Limits):
+ *   POST   /payment/refund           - Admin only [AUTH + ADMIN]
+ * 
+ * PUBLIC (No Rate Limits):
+ *   POST   /payment/webhook          - Signature verified
+ * 
+ * DEVELOPMENT ONLY:
+ *   POST   /payment/simulate-success - Testing only
+ *   POST   /payment/simulate-failure - Testing only
+ * ============================================
+ */
 
 export default router;
