@@ -1,10 +1,10 @@
 import { Request, Response, NextFunction } from 'express';
-import { AnyZodObject, ZodError } from 'zod';
+import { ZodSchema, ZodError } from 'zod';
 
 interface ValidationSchema {
-  body?: AnyZodObject;
-  params?: AnyZodObject;
-  query?: AnyZodObject;
+  body?: ZodSchema;
+  params?: ZodSchema;
+  query?: ZodSchema;
 }
 
 /**
@@ -26,12 +26,14 @@ export const validate = (schema: ValidationSchema) => {
 
       // Validate params if schema provided
       if (schema.params) {
-        req.params = await schema.params.parseAsync(req.params);
+        const validatedParams = await schema.params.parseAsync(req.params);
+        req.params = validatedParams as any;
       }
 
       // Validate query if schema provided
       if (schema.query) {
-        req.query = await schema.query.parseAsync(req.query);
+        const validatedQuery = await schema.query.parseAsync(req.query);
+        req.query = validatedQuery as any;
       }
 
       // All validations passed
@@ -39,7 +41,7 @@ export const validate = (schema: ValidationSchema) => {
     } catch (error) {
       if (error instanceof ZodError) {
         // Format Zod errors into a clear, user-friendly structure
-        const formattedErrors = error.errors.map((err) => ({
+        const formattedErrors = error.issues.map((err) => ({
           field: err.path.join('.'),
           message: err.message,
           code: err.code,
@@ -90,11 +92,6 @@ export const validateAndSanitize = (
 
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
-      // Apply sanitization options
-      const parseOptions = {
-        stripUnknown,
-      };
-
       // Validate and sanitize body
       if (schema.body) {
         req.body = await schema.body.parseAsync(req.body);
@@ -106,26 +103,20 @@ export const validateAndSanitize = (
 
       // Validate and sanitize params
       if (schema.params) {
-        req.params = await schema.params.parseAsync(req.params);
-        
-        if (trimStrings) {
-          req.params = trimObjectStrings(req.params);
-        }
+        const validatedParams = await schema.params.parseAsync(req.params);
+        req.params = (trimStrings ? trimObjectStrings(validatedParams) : validatedParams) as any;
       }
 
       // Validate and sanitize query
       if (schema.query) {
-        req.query = await schema.query.parseAsync(req.query);
-        
-        if (trimStrings) {
-          req.query = trimObjectStrings(req.query);
-        }
+        const validatedQuery = await schema.query.parseAsync(req.query);
+        req.query = (trimStrings ? trimObjectStrings(validatedQuery) : validatedQuery) as any;
       }
 
       next();
     } catch (error) {
       if (error instanceof ZodError) {
-        const formattedErrors = error.errors.map((err) => ({
+        const formattedErrors = error.issues.map((err) => ({
           field: err.path.join('.'),
           message: err.message,
           code: err.code,
@@ -193,7 +184,7 @@ export const handleValidationError = (
   req: Request,
   res: Response
 ): void => {
-  const formattedErrors = error.errors.map((err) => ({
+  const formattedErrors = error.issues.map((err) => ({
     field: err.path.join('.'),
     message: err.message,
     code: err.code,
@@ -216,4 +207,4 @@ export default {
   validate,
   validateAndSanitize,
   handleValidationError,
-};w
+};
