@@ -394,8 +394,9 @@ export const orderApi = {
   track: (id: string) => 
     apiClient.get(`/orders/${id}/track`),
   
-  getInvoice: (id: string) => 
-    apiClient.get(`/orders/${id}/invoice`, { responseType: 'blob' }),
+  // Invoice download - handled by invoiceController
+  getInvoice: (orderId: string) => 
+    apiClient.get(`/orders/${orderId}/invoice`, { responseType: 'blob' }),
 };
 
 // ============================================

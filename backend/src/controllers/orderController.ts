@@ -231,7 +231,7 @@ export const getUserOrders = asyncHandler(
     const result = await orderService.getUserOrders(userId, {
       page: page ? parseInt(page as string) : undefined,
       limit: limit ? parseInt(limit as string) : undefined,
-      status: status as string,
+      status: status as any,
     });
 
     res.json({
@@ -312,23 +312,7 @@ export const getOrderTracking = asyncHandler(
   }
 );
 
-/**
- * Get order invoice
- * GET /api/orders/:id/invoice
- */
-export const getOrderInvoice = asyncHandler(
-  async (req: Request, res: Response) => {
-    const userId = req.userId!;
-    const { id } = req.params;
-
-    const invoice = await orderService.getOrderInvoice(id, userId);
-
-    res.json({
-      success: true,
-      data: invoice,
-    });
-  }
-);
+// Invoice handling removed - use invoiceController.downloadInvoice via /api/orders/:orderId/invoice instead
 
 /**
  * Get all orders (Admin only)
@@ -341,7 +325,7 @@ export const getAllOrders = asyncHandler(
     const result = await orderService.getAllOrders({
       page: page ? parseInt(page as string) : undefined,
       limit: limit ? parseInt(limit as string) : undefined,
-      status: status as string,
+      status: status as any,
     });
 
     res.json({

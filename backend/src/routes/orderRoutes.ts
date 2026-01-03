@@ -20,7 +20,7 @@ router.get('/orders/:id', authenticate, validate(orderValidators.getOrderByIdSch
 router.post('/orders/:id/cancel', authenticate, validate(orderValidators.cancelOrderSchema), orderController.cancelOrder);
 router.post('/orders/:id/refund', authenticate, requireAdmin, orderController.refundOrder);
 router.get('/orders/:id/track', authenticate, validate(orderValidators.getOrderByIdSchema), orderController.getOrderTracking);
-router.get('/orders/:id/invoice', authenticate, validate(orderValidators.getOrderByIdSchema), orderController.getOrderInvoice);
+// Invoice download route removed - use /api/orders/:orderId/invoice from invoiceRoutes.ts instead
 router.get('/admin/orders', authenticate, requireAdmin, validate(orderValidators.getAllOrdersSchema), orderController.getAllOrders);
 router.put('/admin/orders/:id/status', authenticate, requireAdmin, validate(orderValidators.updateOrderStatusSchema), orderController.updateOrderStatus);
 
