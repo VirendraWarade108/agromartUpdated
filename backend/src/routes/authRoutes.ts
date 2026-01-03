@@ -58,44 +58,6 @@ router.post(
 );
 
 /**
- * Request password reset
- * POST /api/auth/forgot-password
- * Rate Limited: 3 requests per hour
- * Validation: Required
- */
-router.post(
-  '/forgot-password',
-  passwordResetLimiter,
-  validate(authValidators.resetPasswordRequestSchema),
-  authController.forgotPassword
-);
-
-/**
- * Reset password with token
- * POST /api/auth/reset-password
- * Rate Limited: 3 attempts per hour
- * Validation: Required
- */
-router.post(
-  '/reset-password',
-  passwordResetLimiter,
-  validate(authValidators.resetPasswordSchema),
-  authController.resetPassword
-);
-
-/**
- * Verify email with token
- * POST /api/auth/verify-email
- * Rate Limited: No (single-use tokens provide protection)
- * Validation: Required
- */
-router.post(
-  '/verify-email',
-  validate(authValidators.verifyEmailSchema),
-  authController.verifyEmail
-);
-
-/**
  * ============================================
  * PROTECTED ROUTES (Authentication required)
  * ============================================
@@ -134,18 +96,6 @@ router.put(
 );
 
 /**
- * Logout user (invalidate tokens)
- * POST /api/auth/logout
- * Rate Limited: No (authenticated users only)
- * Validation: None (no input required)
- */
-router.post(
-  '/logout',
-  authenticate,
-  authController.logout
-);
-
-/**
  * ============================================
  * ROUTE SUMMARY WITH PROTECTION
  * ============================================
@@ -153,15 +103,14 @@ router.post(
  *   POST   /auth/register           - 3 req/hour per IP [VALIDATED]
  *   POST   /auth/login              - 5 failed/15min [VALIDATED]
  *   POST   /auth/refresh            - 10 req/15min [VALIDATED]
- *   POST   /auth/forgot-password    - 3 req/hour [VALIDATED]
- *   POST   /auth/reset-password     - 3 req/hour [VALIDATED]
- *   POST   /auth/verify-email       - No limit [VALIDATED]
  * 
  * PROTECTED (No Rate Limits):
  *   GET    /auth/profile            - Authenticated only
  *   GET    /auth/me                 - Authenticated only (alias)
  *   PUT    /auth/profile            - Authenticated only [VALIDATED]
- *   POST   /auth/logout             - Authenticated only
+ * 
+ * NOTE: Password reset and email verification routes need to be 
+ * implemented in authController before they can be enabled here.
  * ============================================
  */
 

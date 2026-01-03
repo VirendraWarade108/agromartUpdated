@@ -4,7 +4,7 @@ import React, { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Image from 'next/image';
 import Link from 'next/link';
-import { Search, Calendar, Clock, Tag, TrendingUp, Sparkles, ArrowRight, Filter, X } from 'lucide-react';
+import { Search, Calendar, Clock, Tag, TrendingUp, Sparkles, ArrowRight, Filter, X, Leaf, BookOpen } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { blogApi, handleApiError } from '@/lib/api';
 
@@ -57,10 +57,8 @@ export default function BlogPage() {
   const [categories, setCategories] = useState<Category[]>([]);
   const [pagination, setPagination] = useState<Pagination | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [isSearching, setIsSearching] = useState(false);
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [showFilters, setShowFilters] = useState(false);
 
   // Get params from URL
   const page = Number(searchParams.get('page')) || 1;
@@ -71,21 +69,16 @@ export default function BlogPage() {
   // DATA FETCHING
   // ============================================
 
-  /**
-   * Fetch blog posts
-   */
   const fetchPosts = async () => {
     setIsLoading(true);
     try {
-      // If searching, use search endpoint
       if (search) {
         const response = await blogApi.search(search);
         if (response.data.success) {
           setPosts(response.data.data);
-          setPagination(null); // Search doesn't have pagination
+          setPagination(null);
         }
       } else {
-        // Regular listing
         const response = await blogApi.getAll({
           page,
           limit: 12,
@@ -104,9 +97,6 @@ export default function BlogPage() {
     }
   };
 
-  /**
-   * Fetch featured posts
-   */
   const fetchFeaturedPosts = async () => {
     try {
       const response = await blogApi.getFeatured();
@@ -118,9 +108,6 @@ export default function BlogPage() {
     }
   };
 
-  /**
-   * Fetch categories
-   */
   const fetchCategories = async () => {
     try {
       const response = await blogApi.getCategories();
@@ -132,9 +119,6 @@ export default function BlogPage() {
     }
   };
 
-  /**
-   * Initial load
-   */
   useEffect(() => {
     fetchPosts();
     fetchFeaturedPosts();
@@ -145,9 +129,6 @@ export default function BlogPage() {
   // HANDLERS
   // ============================================
 
-  /**
-   * Handle search
-   */
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
     if (searchQuery.trim()) {
@@ -157,9 +138,6 @@ export default function BlogPage() {
     }
   };
 
-  /**
-   * Handle category filter
-   */
   const handleCategoryFilter = (categoryName: string) => {
     if (selectedCategory === categoryName) {
       setSelectedCategory(null);
@@ -172,18 +150,12 @@ export default function BlogPage() {
     }
   };
 
-  /**
-   * Clear filters
-   */
   const clearFilters = () => {
     setSelectedCategory(null);
     setSearchQuery('');
     router.push('/blog');
   };
 
-  /**
-   * Handle pagination
-   */
   const handlePageChange = (newPage: number) => {
     const params = new URLSearchParams();
     params.set('page', String(newPage));
@@ -198,47 +170,59 @@ export default function BlogPage() {
   // ============================================
 
   return (
-    <div className="min-h-screen bg-stone-50">
+    <div className="min-h-screen bg-gradient-to-br from-slate-900 via-green-900 to-slate-900">
       {/* Hero Section */}
-      <section className="relative bg-gradient-to-br from-amber-50 via-stone-100 to-orange-50 border-b-4 border-amber-900">
-        <div className="absolute inset-0 opacity-5">
-          <div className="absolute inset-0" style={{ backgroundImage: 'url("data:image/svg+xml,%3Csvg width="60" height="60" viewBox="0 0 60 60" xmlns="http://www.w3.org/2000/svg"%3E%3Cg fill="none" fill-rule="evenodd"%3E%3Cg fill="%23000000" fill-opacity="1"%3E%3Cpath d="M36 34v-4h-2v4h-4v2h4v4h2v-4h4v-2h-4zm0-30V0h-2v4h-4v2h4v4h2V6h4V4h-4zM6 34v-4H4v4H0v2h4v4h2v-4h4v-2H6zM6 4V0H4v4H0v6h6V4z"/%3E%3C/g%3E%3C/g%3E%3C/svg%3E")' }}></div>
+      <section className="relative py-32 px-4 sm:px-6 lg:px-8 overflow-hidden">
+        <div className="absolute inset-0 opacity-40">
+          <div className="absolute w-96 h-96 bg-green-500/30 rounded-full blur-3xl top-20 left-10 animate-pulse"></div>
+          <div className="absolute w-96 h-96 bg-blue-500/30 rounded-full blur-3xl bottom-20 right-10 animate-pulse"></div>
         </div>
 
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-20 relative">
+        <div className="relative max-w-7xl mx-auto text-center">
           <motion.div
-            initial={{ opacity: 0, y: 20 }}
+            initial={{ opacity: 0, y: 30 }}
             animate={{ opacity: 1, y: 0 }}
-            className="text-center"
+            transition={{ duration: 0.8 }}
           >
-            <div className="inline-flex items-center gap-2 bg-amber-900 text-amber-50 px-6 py-2 rounded-full font-bold text-sm mb-6 tracking-wider">
-              <Sparkles className="w-4 h-4" />
-              AGROMART JOURNAL
+            <div className="inline-flex items-center gap-2 px-6 py-3 rounded-full bg-green-500/20 backdrop-blur-xl border-2 border-green-400/40 mb-8">
+              <BookOpen className="w-5 h-5 text-green-300" />
+              <span className="text-green-100 font-bold text-sm tracking-wide">AGROMART BLOG</span>
             </div>
-            <h1 className="text-6xl md:text-7xl font-black text-amber-900 mb-6 tracking-tight" style={{ fontFamily: 'Georgia, serif' }}>
-              Cultivating Knowledge
+
+            <h1 className="text-5xl sm:text-6xl lg:text-7xl font-black text-white mb-6 leading-tight">
+              Knowledge Hub
             </h1>
-            <p className="text-xl text-stone-700 max-w-2xl mx-auto font-medium leading-relaxed" style={{ fontFamily: 'Georgia, serif' }}>
-              Stories, insights, and innovations from the world of sustainable agriculture
+            <h2 className="text-4xl sm:text-5xl font-extrabold mb-8 leading-tight">
+              <span className="bg-gradient-to-r from-green-300 via-emerald-300 to-cyan-300 text-transparent bg-clip-text">
+                for Modern Farmers
+              </span>
+            </h2>
+
+            <p className="text-xl sm:text-2xl text-gray-200 mb-12 max-w-3xl mx-auto leading-relaxed font-medium">
+              Expert insights, farming tips, and latest innovations in agriculture
             </p>
 
             {/* Search Bar */}
-            <form onSubmit={handleSearch} className="mt-12 max-w-2xl mx-auto">
-              <div className="relative">
-                <input
-                  type="text"
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  placeholder="Search articles..."
-                  className="w-full px-6 py-5 pl-14 rounded-2xl border-4 border-amber-900 bg-white text-lg font-semibold placeholder:text-stone-400 focus:outline-none focus:ring-4 focus:ring-amber-300"
-                />
-                <Search className="absolute left-5 top-1/2 -translate-y-1/2 w-6 h-6 text-amber-900" />
-                <button
-                  type="submit"
-                  className="absolute right-2 top-1/2 -translate-y-1/2 bg-amber-900 text-amber-50 px-6 py-3 rounded-xl font-bold hover:bg-amber-800 transition-colors"
-                >
-                  Search
-                </button>
+            <form onSubmit={handleSearch} className="max-w-2xl mx-auto mb-12">
+              <div className="relative group">
+                <div className="absolute inset-0 bg-gradient-to-r from-green-500 to-emerald-500 rounded-2xl blur-xl group-hover:blur-2xl transition-all duration-300 opacity-60"></div>
+                <div className="relative flex items-center bg-white rounded-2xl border-2 border-transparent focus-within:border-green-400 overflow-hidden shadow-2xl">
+                  <Search className="absolute left-6 w-6 h-6 text-gray-500" />
+                  <input
+                    type="text"
+                    value={searchQuery}
+                    onChange={(e) => setSearchQuery(e.target.value)}
+                    placeholder="Search articles..."
+                    className="w-full pl-16 pr-6 py-5 bg-white text-gray-900 placeholder-gray-500 focus:outline-none text-lg font-medium"
+                  />
+                  <button
+                    type="submit"
+                    className="m-2 px-8 py-3 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 rounded-xl text-white font-bold transition-all flex items-center gap-2"
+                  >
+                    Search
+                    <ArrowRight className="w-5 h-5" />
+                  </button>
+                </div>
               </div>
             </form>
           </motion.div>
@@ -247,268 +231,276 @@ export default function BlogPage() {
 
       {/* Featured Posts */}
       {featuredPosts.length > 0 && !search && (
-        <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-          <div className="flex items-center gap-3 mb-8">
-            <TrendingUp className="w-8 h-8 text-amber-900" />
-            <h2 className="text-4xl font-black text-amber-900" style={{ fontFamily: 'Georgia, serif' }}>
-              Featured Stories
-            </h2>
-          </div>
+        <section className="relative py-20 px-4 sm:px-6 lg:px-8">
+          <div className="max-w-7xl mx-auto">
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              whileInView={{ opacity: 1, y: 0 }}
+              viewport={{ once: true }}
+              className="mb-12"
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <Sparkles className="w-8 h-8 text-green-400" />
+                <h2 className="text-5xl font-black text-white">Featured Stories</h2>
+              </div>
+              <p className="text-xl text-gray-300 font-medium">Top picks for this season</p>
+            </motion.div>
 
-          <div className="grid md:grid-cols-3 gap-8">
-            {featuredPosts.map((post, index) => (
-              <motion.div
-                key={post.id}
-                initial={{ opacity: 0, y: 20 }}
-                animate={{ opacity: 1, y: 0 }}
-                transition={{ delay: index * 0.1 }}
-              >
-                <Link href={`/blog/${post.slug}`}>
-                  <div className="group relative bg-white border-4 border-amber-900 rounded-2xl overflow-hidden hover:shadow-2xl transition-all duration-300 hover:-translate-y-2">
-                    {post.featured_image && (
-                      <div className="relative h-64 overflow-hidden">
-                        <Image
-                          src={post.featured_image}
-                          alt={post.title}
-                          fill
-                          className="object-cover group-hover:scale-110 transition-transform duration-500"
-                        />
-                        <div className="absolute inset-0 bg-gradient-to-t from-amber-900/80 to-transparent"></div>
-                        <div className="absolute bottom-4 left-4 bg-amber-500 text-amber-950 px-4 py-2 rounded-lg font-black text-sm">
-                          FEATURED
+            <div className="grid md:grid-cols-3 gap-8">
+              {featuredPosts.map((post, index) => (
+                <motion.div
+                  key={post.id}
+                  initial={{ opacity: 0, y: 20 }}
+                  whileInView={{ opacity: 1, y: 0 }}
+                  viewport={{ once: true }}
+                  transition={{ delay: index * 0.1 }}
+                  className="relative group"
+                >
+                  <div className="absolute inset-0 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-3xl blur-xl group-hover:blur-2xl transition-all duration-300"></div>
+                  <Link href={`/blog/${post.slug}`}>
+                    <div className="relative bg-white rounded-3xl border-2 border-gray-200 group-hover:border-green-400 overflow-hidden transition-all duration-300 shadow-xl">
+                      {post.featured_image && (
+                        <div className="relative h-56 overflow-hidden">
+                          <Image
+                            src={post.featured_image}
+                            alt={post.title}
+                            fill
+                            className="object-cover group-hover:scale-110 transition-transform duration-500"
+                          />
+                          <div className="absolute top-4 right-4 bg-green-500 text-white px-4 py-2 rounded-xl font-black text-sm shadow-lg">
+                            FEATURED
+                          </div>
+                        </div>
+                      )}
+                      <div className="p-6">
+                        <div className="bg-green-100 text-green-900 px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider inline-block mb-3">
+                          {post.category}
+                        </div>
+                        <h3 className="text-xl font-bold text-gray-900 mb-3 line-clamp-2 group-hover:text-green-600 transition-colors">
+                          {post.title}
+                        </h3>
+                        <p className="text-gray-600 line-clamp-2 mb-4 font-medium">
+                          {post.excerpt}
+                        </p>
+                        <div className="flex items-center justify-between text-sm text-gray-500 pt-4 border-t-2 border-gray-100">
+                          <span className="font-semibold">{post.author}</span>
+                          <span className="flex items-center gap-1">
+                            <Clock className="w-4 h-4" />
+                            {post.reading_time} min
+                          </span>
                         </div>
                       </div>
-                    )}
-                    <div className="p-6">
-                      <div className="flex items-center gap-2 mb-3">
-                        <span className="bg-amber-100 text-amber-900 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider">
-                          {post.category}
-                        </span>
-                      </div>
-                      <h3 className="text-2xl font-black text-amber-900 mb-3 line-clamp-2 group-hover:text-amber-700 transition-colors" style={{ fontFamily: 'Georgia, serif' }}>
-                        {post.title}
-                      </h3>
-                      <p className="text-stone-600 line-clamp-2 mb-4 font-medium">
-                        {post.excerpt}
-                      </p>
-                      <div className="flex items-center justify-between text-sm text-stone-500">
-                        <span className="font-semibold">{post.author}</span>
-                        <span className="flex items-center gap-1">
-                          <Clock className="w-4 h-4" />
-                          {post.reading_time} min
-                        </span>
-                      </div>
                     </div>
-                  </div>
-                </Link>
-              </motion.div>
-            ))}
+                  </Link>
+                </motion.div>
+              ))}
+            </div>
           </div>
         </section>
       )}
 
       {/* Main Content */}
-      <section className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-16">
-        <div className="flex flex-col lg:flex-row gap-12">
-          {/* Sidebar */}
-          <aside className="lg:w-80 flex-shrink-0">
-            <div className="sticky top-24">
-              {/* Categories */}
-              <div className="bg-white border-4 border-amber-900 rounded-2xl p-6 mb-8">
-                <div className="flex items-center justify-between mb-6">
-                  <h3 className="text-2xl font-black text-amber-900" style={{ fontFamily: 'Georgia, serif' }}>
-                    Categories
-                  </h3>
-                  {(selectedCategory || search) && (
-                    <button
-                      onClick={clearFilters}
-                      className="text-sm font-bold text-amber-700 hover:text-amber-900 flex items-center gap-1"
-                    >
-                      <X className="w-4 h-4" />
-                      Clear
-                    </button>
-                  )}
-                </div>
-                <div className="space-y-2">
-                  {categories.map((cat) => (
-                    <button
-                      key={cat.name}
-                      onClick={() => handleCategoryFilter(cat.name)}
-                      className={`w-full flex items-center justify-between p-3 rounded-xl font-bold transition-all ${
-                        selectedCategory === cat.name || category === cat.name
-                          ? 'bg-amber-900 text-amber-50'
-                          : 'bg-stone-50 text-amber-900 hover:bg-amber-100'
-                      }`}
-                    >
-                      <span>{cat.name}</span>
-                      <span className={`px-2 py-1 rounded-full text-xs font-black ${
-                        selectedCategory === cat.name || category === cat.name
-                          ? 'bg-amber-700'
-                          : 'bg-amber-200 text-amber-900'
-                      }`}>
-                        {cat.count}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              {/* Active Filters */}
-              {(search || category) && (
-                <div className="bg-amber-50 border-4 border-amber-900 rounded-2xl p-6">
-                  <h3 className="text-lg font-black text-amber-900 mb-4">
-                    Active Filters
-                  </h3>
-                  <div className="space-y-2">
-                    {search && (
-                      <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border-2 border-amber-900">
-                        <Search className="w-4 h-4 text-amber-900" />
-                        <span className="font-semibold text-sm">{search}</span>
-                      </div>
-                    )}
-                    {category && (
-                      <div className="flex items-center gap-2 bg-white px-3 py-2 rounded-lg border-2 border-amber-900">
-                        <Filter className="w-4 h-4 text-amber-900" />
-                        <span className="font-semibold text-sm">{category}</span>
-                      </div>
-                    )}
+      <section className="relative py-20 px-4 sm:px-6 lg:px-8">
+        <div className="max-w-7xl mx-auto">
+          <div className="flex flex-col lg:flex-row gap-12">
+            {/* Sidebar */}
+            <aside className="lg:w-80 flex-shrink-0">
+              <div className="sticky top-24">
+                {/* Categories */}
+                <div className="relative group mb-8">
+                  <div className="absolute inset-0 bg-gradient-to-br from-green-500/10 to-blue-500/10 rounded-3xl blur-xl"></div>
+                  <div className="relative bg-slate-900/60 backdrop-blur-2xl rounded-3xl border-2 border-white/20 p-6 shadow-xl">
+                    <div className="flex items-center justify-between mb-6">
+                      <h3 className="text-2xl font-black text-white">Categories</h3>
+                      {(selectedCategory || search) && (
+                        <button
+                          onClick={clearFilters}
+                          className="text-sm font-bold text-green-300 hover:text-green-200 flex items-center gap-1"
+                        >
+                          <X className="w-4 h-4" />
+                          Clear
+                        </button>
+                      )}
+                    </div>
+                    <div className="space-y-2">
+                      {categories.map((cat) => (
+                        <button
+                          key={cat.name}
+                          onClick={() => handleCategoryFilter(cat.name)}
+                          className={`w-full flex items-center justify-between p-3 rounded-xl font-bold transition-all ${
+                            selectedCategory === cat.name || category === cat.name
+                              ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg'
+                              : 'bg-white/10 text-white hover:bg-white/20'
+                          }`}
+                        >
+                          <span>{cat.name}</span>
+                          <span className={`px-2 py-1 rounded-full text-xs font-black ${
+                            selectedCategory === cat.name || category === cat.name
+                              ? 'bg-white/20'
+                              : 'bg-green-500/30 text-green-300'
+                          }`}>
+                            {cat.count}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
                   </div>
                 </div>
-              )}
-            </div>
-          </aside>
 
-          {/* Posts Grid */}
-          <div className="flex-1">
-            <div className="flex items-center justify-between mb-8">
-              <h2 className="text-3xl font-black text-amber-900" style={{ fontFamily: 'Georgia, serif' }}>
-                {search ? `Search Results for "${search}"` : category ? `${category} Articles` : 'All Articles'}
-              </h2>
-              {pagination && (
-                <span className="text-stone-600 font-semibold">
-                  {pagination.total} articles
-                </span>
-              )}
-            </div>
-
-            {/* Loading State */}
-            {isLoading && (
-              <div className="grid md:grid-cols-2 gap-8">
-                {[1, 2, 3, 4].map((i) => (
-                  <div key={i} className="bg-white border-4 border-stone-200 rounded-2xl p-6 animate-pulse">
-                    <div className="h-48 bg-stone-200 rounded-xl mb-4"></div>
-                    <div className="h-6 bg-stone-200 rounded w-3/4 mb-3"></div>
-                    <div className="h-4 bg-stone-200 rounded w-full mb-2"></div>
-                    <div className="h-4 bg-stone-200 rounded w-2/3"></div>
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* Posts Grid */}
-            {!isLoading && posts.length > 0 && (
-              <div className="grid md:grid-cols-2 gap-8">
-                {posts.map((post, index) => (
-                  <motion.div
-                    key={post.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ delay: index * 0.05 }}
-                  >
-                    <Link href={`/blog/${post.slug}`}>
-                      <div className="group bg-white border-4 border-amber-900 rounded-2xl overflow-hidden hover:shadow-2xl transition-all duration-300 hover:-translate-y-1 h-full flex flex-col">
-                        {post.featured_image && (
-                          <div className="relative h-56 overflow-hidden">
-                            <Image
-                              src={post.featured_image}
-                              alt={post.title}
-                              fill
-                              className="object-cover group-hover:scale-110 transition-transform duration-500"
-                            />
+                {/* Active Filters */}
+                {(search || category) && (
+                  <div className="relative group">
+                    <div className="absolute inset-0 bg-gradient-to-br from-blue-500/10 to-cyan-500/10 rounded-3xl blur-xl"></div>
+                    <div className="relative bg-slate-900/60 backdrop-blur-2xl rounded-3xl border-2 border-white/20 p-6 shadow-xl">
+                      <h3 className="text-lg font-black text-white mb-4">Active Filters</h3>
+                      <div className="space-y-2">
+                        {search && (
+                          <div className="flex items-center gap-2 bg-white/10 px-3 py-2 rounded-lg">
+                            <Search className="w-4 h-4 text-green-300" />
+                            <span className="font-semibold text-sm text-white">{search}</span>
                           </div>
                         )}
-                        <div className="p-6 flex-1 flex flex-col">
-                          <div className="flex items-center gap-2 mb-3">
-                            <span className="bg-amber-100 text-amber-900 px-3 py-1 rounded-full text-xs font-black uppercase tracking-wider">
-                              {post.category}
-                            </span>
+                        {category && (
+                          <div className="flex items-center gap-2 bg-white/10 px-3 py-2 rounded-lg">
+                            <Filter className="w-4 h-4 text-green-300" />
+                            <span className="font-semibold text-sm text-white">{category}</span>
                           </div>
-                          <h3 className="text-2xl font-black text-amber-900 mb-3 line-clamp-2 group-hover:text-amber-700 transition-colors" style={{ fontFamily: 'Georgia, serif' }}>
-                            {post.title}
-                          </h3>
-                          <p className="text-stone-600 line-clamp-3 mb-4 font-medium flex-1">
-                            {post.excerpt}
-                          </p>
-                          <div className="flex items-center justify-between text-sm pt-4 border-t-2 border-stone-100">
-                            <span className="font-semibold text-stone-700">{post.author}</span>
-                            <span className="flex items-center gap-1 text-stone-500">
-                              <Clock className="w-4 h-4" />
-                              {post.reading_time} min
-                            </span>
-                          </div>
-                        </div>
+                        )}
                       </div>
-                    </Link>
-                  </motion.div>
-                ))}
+                    </div>
+                  </div>
+                )}
               </div>
-            )}
+            </aside>
 
-            {/* Empty State */}
-            {!isLoading && posts.length === 0 && (
-              <div className="text-center py-20">
-                <div className="inline-flex items-center justify-center w-20 h-20 bg-amber-100 rounded-full mb-6">
-                  <Search className="w-10 h-10 text-amber-900" />
-                </div>
-                <h3 className="text-2xl font-black text-amber-900 mb-3">
-                  No articles found
-                </h3>
-                <p className="text-stone-600 mb-6">
-                  Try adjusting your search or filters
-                </p>
-                <button
-                  onClick={clearFilters}
-                  className="bg-amber-900 text-amber-50 px-6 py-3 rounded-xl font-bold hover:bg-amber-800 transition-colors"
-                >
-                  Clear Filters
-                </button>
+            {/* Posts Grid */}
+            <div className="flex-1">
+              <div className="flex items-center justify-between mb-8">
+                <h2 className="text-4xl font-black text-white">
+                  {search ? `Search: "${search}"` : category ? `${category}` : 'All Articles'}
+                </h2>
+                {pagination && (
+                  <span className="text-gray-300 font-semibold">
+                    {pagination.total} articles
+                  </span>
+                )}
               </div>
-            )}
 
-            {/* Pagination */}
-            {pagination && pagination.totalPages > 1 && (
-              <div className="flex items-center justify-center gap-2 mt-12">
-                <button
-                  onClick={() => handlePageChange(pagination.page - 1)}
-                  disabled={pagination.page === 1}
-                  className="px-4 py-2 rounded-xl border-4 border-amber-900 bg-white font-bold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-amber-50 transition-colors"
-                >
-                  Previous
-                </button>
-                <div className="flex items-center gap-2">
-                  {Array.from({ length: pagination.totalPages }, (_, i) => i + 1).map((pageNum) => (
-                    <button
-                      key={pageNum}
-                      onClick={() => handlePageChange(pageNum)}
-                      className={`w-12 h-12 rounded-xl font-black transition-colors ${
-                        pageNum === pagination.page
-                          ? 'bg-amber-900 text-amber-50 border-4 border-amber-900'
-                          : 'bg-white text-amber-900 border-4 border-amber-900 hover:bg-amber-50'
-                      }`}
-                    >
-                      {pageNum}
-                    </button>
+              {/* Loading State */}
+              {isLoading && (
+                <div className="grid md:grid-cols-2 gap-8">
+                  {[1, 2, 3, 4].map((i) => (
+                    <div key={i} className="bg-white/10 backdrop-blur-xl rounded-3xl p-6 animate-pulse">
+                      <div className="h-48 bg-white/20 rounded-xl mb-4"></div>
+                      <div className="h-6 bg-white/20 rounded w-3/4 mb-3"></div>
+                      <div className="h-4 bg-white/20 rounded w-full mb-2"></div>
+                    </div>
                   ))}
                 </div>
-                <button
-                  onClick={() => handlePageChange(pagination.page + 1)}
-                  disabled={pagination.page === pagination.totalPages}
-                  className="px-4 py-2 rounded-xl border-4 border-amber-900 bg-white font-bold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-amber-50 transition-colors"
-                >
-                  Next
-                </button>
-              </div>
-            )}
+              )}
+
+              {/* Posts Grid */}
+              {!isLoading && posts.length > 0 && (
+                <div className="grid md:grid-cols-2 gap-8">
+                  {posts.map((post, index) => (
+                    <motion.div
+                      key={post.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      whileInView={{ opacity: 1, y: 0 }}
+                      viewport={{ once: true }}
+                      transition={{ delay: index * 0.05 }}
+                      className="relative group"
+                    >
+                      <div className="absolute inset-0 bg-gradient-to-br from-green-500/20 to-blue-500/20 rounded-3xl blur-xl group-hover:blur-2xl transition-all duration-300"></div>
+                      <Link href={`/blog/${post.slug}`}>
+                        <div className="relative bg-white rounded-3xl border-2 border-gray-200 group-hover:border-green-400 overflow-hidden transition-all duration-300 shadow-xl h-full flex flex-col">
+                          {post.featured_image && (
+                            <div className="relative h-56 overflow-hidden">
+                              <Image
+                                src={post.featured_image}
+                                alt={post.title}
+                                fill
+                                className="object-cover group-hover:scale-110 transition-transform duration-500"
+                              />
+                            </div>
+                          )}
+                          <div className="p-6 flex-1 flex flex-col">
+                            <div className="bg-green-100 text-green-900 px-3 py-1 rounded-lg text-xs font-black uppercase tracking-wider inline-block mb-3 w-fit">
+                              {post.category}
+                            </div>
+                            <h3 className="text-xl font-bold text-gray-900 mb-3 line-clamp-2 group-hover:text-green-600 transition-colors">
+                              {post.title}
+                            </h3>
+                            <p className="text-gray-600 line-clamp-3 mb-4 font-medium flex-1">
+                              {post.excerpt}
+                            </p>
+                            <div className="flex items-center justify-between text-sm pt-4 border-t-2 border-gray-100">
+                              <span className="font-semibold text-gray-700">{post.author}</span>
+                              <span className="flex items-center gap-1 text-gray-500">
+                                <Clock className="w-4 h-4" />
+                                {post.reading_time} min
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+                      </Link>
+                    </motion.div>
+                  ))}
+                </div>
+              )}
+
+              {/* Empty State */}
+              {!isLoading && posts.length === 0 && (
+                <div className="text-center py-20">
+                  <div className="inline-flex items-center justify-center w-20 h-20 bg-white/10 backdrop-blur-xl rounded-full mb-6">
+                    <Search className="w-10 h-10 text-green-400" />
+                  </div>
+                  <h3 className="text-3xl font-black text-white mb-3">No articles found</h3>
+                  <p className="text-gray-300 mb-6">Try adjusting your search or filters</p>
+                  <button
+                    onClick={clearFilters}
+                    className="px-8 py-4 bg-gradient-to-r from-green-600 to-emerald-600 hover:from-green-700 hover:to-emerald-700 rounded-xl text-white font-bold transition-all shadow-lg"
+                  >
+                    Clear Filters
+                  </button>
+                </div>
+              )}
+
+              {/* Pagination */}
+              {pagination && pagination.totalPages > 1 && (
+                <div className="flex items-center justify-center gap-2 mt-12">
+                  <button
+                    onClick={() => handlePageChange(pagination.page - 1)}
+                    disabled={pagination.page === 1}
+                    className="px-6 py-3 rounded-xl bg-white/10 backdrop-blur-xl border-2 border-white/20 text-white font-bold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white/20 transition-all"
+                  >
+                    Previous
+                  </button>
+                  <div className="flex items-center gap-2">
+                    {Array.from({ length: Math.min(pagination.totalPages, 5) }, (_, i) => i + 1).map((pageNum) => (
+                      <button
+                        key={pageNum}
+                        onClick={() => handlePageChange(pageNum)}
+                        className={`w-12 h-12 rounded-xl font-black transition-all ${
+                          pageNum === pagination.page
+                            ? 'bg-gradient-to-r from-green-600 to-emerald-600 text-white shadow-lg'
+                            : 'bg-white/10 backdrop-blur-xl text-white border-2 border-white/20 hover:bg-white/20'
+                        }`}
+                      >
+                        {pageNum}
+                      </button>
+                    ))}
+                  </div>
+                  <button
+                    onClick={() => handlePageChange(pagination.page + 1)}
+                    disabled={pagination.page === pagination.totalPages}
+                    className="px-6 py-3 rounded-xl bg-white/10 backdrop-blur-xl border-2 border-white/20 text-white font-bold disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white/20 transition-all"
+                  >
+                    Next
+                  </button>
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </section>
