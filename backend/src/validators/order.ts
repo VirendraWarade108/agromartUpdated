@@ -1,6 +1,22 @@
 import { z } from 'zod';
 
 // ============================================
+// CANONICAL ORDER STATUS ENUM
+// ============================================
+export const OrderStatusEnum = z.union([
+  z.literal('pending'),
+  z.literal('paid'),
+  z.literal('processing'),
+  z.literal('shipped'),
+  z.literal('delivered'),
+  z.literal('cancelled'),
+  z.literal('refunded'),
+  z.literal('failed'),
+]);
+
+export type OrderStatus = z.infer<typeof OrderStatusEnum>;
+
+// ============================================
 // ADD TO CART VALIDATION
 // ============================================
 export const addToCartSchema = {
@@ -120,10 +136,12 @@ export const checkoutSchema = {
         .max(100, 'Country must not exceed 100 characters')
         .default('India'),
     }).optional(),
-    paymentMethod: z
-      .enum(['card', 'upi', 'netbanking', 'cod'], {
-        errorMap: () => ({ message: 'Invalid payment method' }),
-      }),
+    paymentMethod: z.union([
+      z.literal('card'),
+      z.literal('upi'),
+      z.literal('netbanking'),
+      z.literal('cod'),
+    ]),
     couponCode: z
       .string()
       .min(3, 'Coupon code must be at least 3 characters')
@@ -183,20 +201,16 @@ export const getUserOrdersSchema = {
     page: z
       .string()
       .regex(/^\d+$/)
+      .default('1')
       .transform(Number)
-      .refine((n) => n > 0, 'Page must be at least 1')
-      .optional()
-      .default('1'),
+      .refine((n) => n > 0, 'Page must be at least 1'),
     limit: z
       .string()
       .regex(/^\d+$/)
+      .default('10')
       .transform(Number)
-      .refine((n) => n > 0 && n <= 50, 'Limit must be between 1 and 50')
-      .optional()
-      .default('10'),
-    status: z
-      .enum(['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'])
-      .optional(),
+      .refine((n) => n > 0 && n <= 50, 'Limit must be between 1 and 50'),
+    status: OrderStatusEnum.optional(),
   }),
 };
 
@@ -208,19 +222,15 @@ export const getAllOrdersSchema = {
     page: z
       .string()
       .regex(/^\d+$/)
-      .transform(Number)
-      .optional()
-      .default('1'),
+      .default('1')
+      .transform(Number),
     limit: z
       .string()
       .regex(/^\d+$/)
+      .default('20')
       .transform(Number)
-      .refine((n) => n > 0 && n <= 100, 'Limit must be between 1 and 100')
-      .optional()
-      .default('20'),
-    status: z
-      .enum(['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'])
-      .optional(),
+      .refine((n) => n > 0 && n <= 100, 'Limit must be between 1 and 100'),
+    status: OrderStatusEnum.optional(),
     userId: z
       .string()
       .cuid('Invalid user ID')
@@ -246,10 +256,7 @@ export const updateOrderStatusSchema = {
       .cuid('Invalid order ID'),
   }),
   body: z.object({
-    status: z
-      .enum(['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded'], {
-        errorMap: () => ({ message: 'Invalid order status' }),
-      }),
+    status: OrderStatusEnum,
     trackingInfo: z.object({
       location: z
         .string()
@@ -263,7 +270,7 @@ export const updateOrderStatusSchema = {
         .max(500, 'Description must not exceed 500 characters')
         .trim(),
       metadata: z
-        .record(z.any())
+        .record(z.string(), z.any())
         .optional(),
     }).optional(),
   }),

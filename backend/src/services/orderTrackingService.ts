@@ -1,5 +1,6 @@
 import prisma from '../config/database';
 import { AppError } from '../middleware/errorHandler';
+import { OrderStatus } from '../validators/order';
 
 /**
  * Get order tracking history
@@ -30,7 +31,7 @@ export const getOrderTracking = async (orderId: string, userId?: string) => {
  */
 export const addTrackingUpdate = async (trackingData: {
   orderId: string;
-  status: string;
+  status: OrderStatus;
   location?: string;
   description: string;
   metadata?: any;
@@ -47,7 +48,7 @@ export const addTrackingUpdate = async (trackingData: {
     data: {
       orderId: trackingData.orderId,
       status: trackingData.status,
-      location: trackingData.location,
+      location: trackingData.location || null,
       description: trackingData.description,
       metadata: trackingData.metadata || null,
     },
@@ -80,7 +81,7 @@ export const getLatestTracking = async (orderId: string) => {
 /**
  * Get all orders by status (Admin)
  */
-export const getOrdersByStatus = async (status: string) => {
+export const getOrdersByStatus = async (status: OrderStatus) => {
   const orders = await prisma.order.findMany({
     where: { status },
     include: {
@@ -108,7 +109,7 @@ export const getOrdersByStatus = async (status: string) => {
 export const bulkUpdateOrderStatus = async (
   updates: Array<{
     orderId: string;
-    status: string;
+    status: OrderStatus;
     description: string;
     location?: string;
   }>
@@ -150,12 +151,12 @@ export const bulkUpdateOrderStatus = async (
 export const getTrackingTimeline = async (orderId: string, userId?: string) => {
   const tracking = await getOrderTracking(orderId, userId);
 
-  const statusFlow = [
-    'order_placed',
-    'confirmed',
+  // Updated status flow to match canonical OrderStatus
+  const statusFlow: OrderStatus[] = [
+    'pending',
+    'paid',
     'processing',
     'shipped',
-    'out_for_delivery',
     'delivered',
   ];
 
@@ -164,9 +165,9 @@ export const getTrackingTimeline = async (orderId: string, userId?: string) => {
     return {
       status,
       completed: !!trackingEntry,
-      timestamp: trackingEntry?.timestamp,
-      description: trackingEntry?.description,
-      location: trackingEntry?.location,
+      timestamp: trackingEntry?.timestamp || null,
+      description: trackingEntry?.description || null,
+      location: trackingEntry?.location || null,
     };
   });
 
@@ -178,9 +179,14 @@ export const getTrackingTimeline = async (orderId: string, userId?: string) => {
     estimatedDelivery = deliveryDate;
   }
 
+  // Get current status from last tracking entry, default to 'pending'
+  const currentStatus: OrderStatus = tracking.length > 0 
+    ? (tracking[tracking.length - 1]?.status as OrderStatus) 
+    : 'pending';
+
   return {
     timeline,
     estimatedDelivery,
-    currentStatus: tracking[tracking.length - 1]?.status || 'order_placed',
+    currentStatus,
   };
 };

@@ -155,8 +155,18 @@ export interface Coupon {
 }
 
 // ============================================
-// ORDER TYPES
+// ORDER TYPES - CANONICAL STATUS
 // ============================================
+
+export type OrderStatus = 
+  | 'pending'
+  | 'paid'
+  | 'processing'
+  | 'shipped'
+  | 'delivered'
+  | 'cancelled'
+  | 'refunded'
+  | 'failed';
 
 export interface Order {
   id: string;
@@ -189,15 +199,6 @@ export interface OrderItem {
   price: number;
   subtotal: number;
 }
-
-export type OrderStatus = 
-  | 'pending'
-  | 'confirmed'
-  | 'processing'
-  | 'shipped'
-  | 'delivered'
-  | 'cancelled'
-  | 'refunded';
 
 export type PaymentMethod = 
   | 'card'

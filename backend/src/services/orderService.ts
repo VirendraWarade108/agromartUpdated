@@ -4,6 +4,7 @@ import { getCart, clearCart, calculateCartTotals, validateCartStock } from './ca
 import * as couponService from './couponService';
 import * as productService from './productService';
 import * as orderTrackingService from './orderTrackingService';
+import { OrderStatus } from '../validators/order';
 
 /**
  * Calculate shipping fee
@@ -117,12 +118,12 @@ export const createOrder = async (
     const tax = calculateTax(subtotal, couponDiscount);
     const total = subtotal - couponDiscount + shippingFee + tax;
 
-    // Create order
+    // Create order with canonical status
     const order = await tx.order.create({
       data: {
         userId,
         total,
-        status: 'pending',
+        status: 'pending' as OrderStatus,
         ...(couponData && { coupon: couponData }),
         items: {
           create: cart.items.map((item) => ({
@@ -158,7 +159,7 @@ export const createOrder = async (
     await tx.orderTracking.create({
       data: {
         orderId: order.id,
-        status: 'pending',
+        status: 'pending' as OrderStatus,
         description: 'Order placed successfully',
       },
     });
@@ -177,7 +178,7 @@ export const createOrder = async (
  */
 export const getUserOrders = async (
   userId: string,
-  options: { page?: number; limit?: number; status?: string } = {}
+  options: { page?: number; limit?: number; status?: OrderStatus } = {}
 ) => {
   const { page = 1, limit = 20, status } = options;
   const skip = (page - 1) * limit;
@@ -271,7 +272,7 @@ export const getOrderById = async (orderId: string, userId?: string) => {
 export const getAllOrders = async (options: {
   page?: number;
   limit?: number;
-  status?: string;
+  status?: OrderStatus;
 } = {}) => {
   const { page = 1, limit = 20, status } = options;
   const skip = (page - 1) * limit;
@@ -327,8 +328,8 @@ export const getAllOrders = async (options: {
 /**
  * Update order status (Admin only)
  */
-export const updateOrderStatus = async (orderId: string, status: string) => {
-  const validStatuses = ['pending', 'processing', 'shipped', 'delivered', 'cancelled', 'paid', 'failed'];
+export const updateOrderStatus = async (orderId: string, status: OrderStatus) => {
+  const validStatuses: OrderStatus[] = ['pending', 'paid', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'failed'];
 
   if (!validStatuses.includes(status)) {
     throw new AppError('Invalid order status', 400);
@@ -398,10 +399,10 @@ export const cancelOrder = async (orderId: string, userId: string) => {
       throw new AppError('Order is already cancelled', 400);
     }
 
-    // Update order status
+    // Update order status to cancelled
     const updatedOrder = await tx.order.update({
       where: { id: orderId },
-      data: { status: 'cancelled' },
+      data: { status: 'cancelled' as OrderStatus },
     });
 
     // Restore stock
@@ -420,7 +421,7 @@ export const cancelOrder = async (orderId: string, userId: string) => {
     await tx.orderTracking.create({
       data: {
         orderId,
-        status: 'cancelled',
+        status: 'cancelled' as OrderStatus,
         description: 'Order cancelled by user',
       },
     });
@@ -453,10 +454,10 @@ export const refundOrder = async (orderId: string, refundAmount?: number) => {
       throw new AppError('Refund amount cannot exceed order total', 400);
     }
 
-    // Update order status
+    // Update order status to refunded
     const updatedOrder = await tx.order.update({
       where: { id: orderId },
-      data: { status: 'refunded' },
+      data: { status: 'refunded' as OrderStatus },
     });
 
     // Restore stock
@@ -481,7 +482,7 @@ export const refundOrder = async (orderId: string, refundAmount?: number) => {
     await tx.orderTracking.create({
       data: {
         orderId,
-        status: 'refunded',
+        status: 'refunded' as OrderStatus,
         description: `Order refunded (amount: ₹${finalRefundAmount})`,
       },
     });

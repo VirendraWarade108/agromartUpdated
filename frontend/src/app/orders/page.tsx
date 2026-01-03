@@ -3,19 +3,20 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { motion } from 'framer-motion';
-import { Package, Search, Filter, Eye, Download, Calendar, TrendingUp, Clock, CheckCircle, XCircle, Truck, ChevronRight } from 'lucide-react';
+import { Package, Search, Filter, Eye, Download, Calendar, TrendingUp, Clock, CheckCircle, XCircle, Truck, ChevronRight, DollarSign, AlertCircle } from 'lucide-react';
 import { orderApi, handleApiError } from '@/lib/api';
 import { showErrorToast } from '@/store/uiStore';
 import { PageLoader, TableSkeleton } from '@/components/shared/LoadingSpinner';
 import { formatPrice, formatDate } from '@/lib/utils';
 import AuthGuard from '@/components/shared/AuthGuard';
+import { OrderStatus } from '@/types';
 
 interface Order {
   id: string;
   orderNumber: string;
   items: any[];
   total: number;
-  status: 'pending' | 'confirmed' | 'processing' | 'shipped' | 'delivered' | 'cancelled';
+  status: OrderStatus;
   paymentMethod: string;
   paymentStatus: 'pending' | 'completed' | 'failed';
   shippingAddress: any;
@@ -27,7 +28,7 @@ function OrdersPageContent() {
   const [orders, setOrders] = useState<Order[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
-  const [selectedStatus, setSelectedStatus] = useState('all');
+  const [selectedStatus, setSelectedStatus] = useState<'all' | OrderStatus>('all');
 
   // Fetch orders
   useEffect(() => {
@@ -51,7 +52,6 @@ function OrdersPageContent() {
     } catch (error) {
       const message = handleApiError(error);
       showErrorToast(message, 'Failed to load orders');
-    // Only show mock data in development
     } finally {
       setIsLoading(false);
     }
@@ -62,26 +62,32 @@ function OrdersPageContent() {
     order.orderNumber.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  // Status options
-  const statusOptions = [
+  // Status options with canonical OrderStatus values
+  const statusOptions: Array<{ value: 'all' | OrderStatus; label: string; count: number }> = [
     { value: 'all', label: 'All Orders', count: orders.length },
     { value: 'pending', label: 'Pending', count: orders.filter(o => o.status === 'pending').length },
+    { value: 'paid', label: 'Paid', count: orders.filter(o => o.status === 'paid').length },
     { value: 'processing', label: 'Processing', count: orders.filter(o => o.status === 'processing').length },
     { value: 'shipped', label: 'Shipped', count: orders.filter(o => o.status === 'shipped').length },
     { value: 'delivered', label: 'Delivered', count: orders.filter(o => o.status === 'delivered').length },
+    { value: 'cancelled', label: 'Cancelled', count: orders.filter(o => o.status === 'cancelled').length },
+    { value: 'refunded', label: 'Refunded', count: orders.filter(o => o.status === 'refunded').length },
+    { value: 'failed', label: 'Failed', count: orders.filter(o => o.status === 'failed').length },
   ];
 
-  // Get status display
-  const getStatusDisplay = (status: string) => {
-    const displays: Record<string, { color: string; icon: any; label: string }> = {
+  // Get status display with all canonical statuses
+  const getStatusDisplay = (status: OrderStatus) => {
+    const displays: Record<OrderStatus, { color: string; icon: any; label: string }> = {
       pending: { color: 'bg-yellow-100 text-yellow-700 border-yellow-200', icon: Clock, label: 'Pending' },
-      confirmed: { color: 'bg-blue-100 text-blue-700 border-blue-200', icon: CheckCircle, label: 'Confirmed' },
+      paid: { color: 'bg-emerald-100 text-emerald-700 border-emerald-200', icon: DollarSign, label: 'Paid' },
       processing: { color: 'bg-purple-100 text-purple-700 border-purple-200', icon: Package, label: 'Processing' },
       shipped: { color: 'bg-indigo-100 text-indigo-700 border-indigo-200', icon: Truck, label: 'Shipped' },
       delivered: { color: 'bg-green-100 text-green-700 border-green-200', icon: CheckCircle, label: 'Delivered' },
       cancelled: { color: 'bg-red-100 text-red-700 border-red-200', icon: XCircle, label: 'Cancelled' },
+      refunded: { color: 'bg-orange-100 text-orange-700 border-orange-200', icon: DollarSign, label: 'Refunded' },
+      failed: { color: 'bg-rose-100 text-rose-700 border-rose-200', icon: AlertCircle, label: 'Failed' },
     };
-    return displays[status] || displays.pending;
+    return displays[status];
   };
 
   if (isLoading) {
