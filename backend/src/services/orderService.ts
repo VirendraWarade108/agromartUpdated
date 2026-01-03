@@ -57,6 +57,96 @@ const calculateTax = (subtotal: number, discount: number): number => {
 };
 
 /**
+ * Order Totals Interface
+ */
+interface OrderTotals {
+  subtotal: number;
+  discount: number;
+  tax: number;
+  shipping: number;
+  total: number;
+  couponData?: {
+    code: string;
+    type: string;
+    value: number;
+    discount: number;
+  };
+  couponId?: string;
+}
+
+/**
+ * Calculate order totals with full backend authority
+ * This is the single source of truth for all pricing calculations
+ * 
+ * @param cartItems - Cart items with products from database
+ * @param couponCode - Optional coupon code to apply
+ * @returns Normalized order totals object
+ */
+const calculateOrderTotals = async (
+  cartItems: Array<{
+    productId: string;
+    quantity: number;
+    product: {
+      price: number;
+    };
+  }>,
+  couponCode?: string
+): Promise<OrderTotals> => {
+  // Calculate subtotal from DATABASE product prices (never trust client)
+  const subtotal = cartItems.reduce(
+    (sum, item) => sum + item.product.price * item.quantity,
+    0
+  );
+
+  // Apply coupon discount if provided and valid
+  let discount = 0;
+  let couponData: any = undefined;
+  let couponId: string | undefined = undefined;
+
+  if (couponCode) {
+    try {
+      // Validate coupon with current subtotal
+      const couponResult = await couponService.validateCoupon(
+        couponCode,
+        subtotal
+      );
+
+      discount = couponResult.discountAmount;
+      couponId = couponResult.coupon.id;
+
+      couponData = {
+        code: couponResult.coupon.code,
+        type: couponResult.coupon.type,
+        value: couponResult.coupon.value,
+        discount: discount,
+      };
+    } catch (error: any) {
+      // Re-throw coupon validation errors
+      throw new AppError(error.message || 'Invalid coupon', 400);
+    }
+  }
+
+  // Calculate shipping based on subtotal (before discount)
+  const shipping = calculateShipping(subtotal);
+
+  // Calculate tax on (subtotal - discount)
+  const tax = calculateTax(subtotal, discount);
+
+  // Calculate final total
+  const total = subtotal - discount + shipping + tax;
+
+  return {
+    subtotal,
+    discount,
+    tax,
+    shipping,
+    total,
+    couponData,
+    couponId,
+  };
+};
+
+/**
  * Create order from cart (Checkout)
  * Stock is decremented here atomically - NOT in payment webhooks
  */
@@ -114,54 +204,22 @@ export const createOrder = async (
       });
     }
 
-    // Calculate subtotal
-    const subtotal = cart.items.reduce(
-      (sum, item) => sum + item.product.price * item.quantity,
-      0
-    );
+    // Calculate order totals with backend authority
+    // This is the ONLY place where pricing is determined
+    const totals = await calculateOrderTotals(cart.items, data.couponCode);
 
-    // Apply coupon discount
-    let couponDiscount = 0;
-    let couponData: any = undefined;
-    let couponId: string | undefined = undefined;
-
-    if (data.couponCode) {
-      try {
-        const couponResult = await couponService.validateCoupon(
-          data.couponCode,
-          subtotal
-        );
-
-        couponDiscount = couponResult.discountAmount;
-        couponId = couponResult.coupon.id;
-
-        couponData = {
-          code: couponResult.coupon.code,
-          type: couponResult.coupon.type,
-          value: couponResult.coupon.value,
-          discount: couponDiscount,
-        };
-      } catch (error: any) {
-        throw new AppError(error.message || 'Invalid coupon', 400);
-      }
-    }
-    
-    const shippingFee = calculateShipping(subtotal);
-    const tax = calculateTax(subtotal, couponDiscount);
-    const total = subtotal - couponDiscount + shippingFee + tax;
-
-    // Create order with canonical status
+    // Create order with canonical status and calculated totals
     const order = await tx.order.create({
       data: {
         userId,
-        total,
+        total: totals.total,
         status: 'pending' as OrderStatus,
-        ...(couponData && { coupon: couponData }),
+        ...(totals.couponData && { coupon: totals.couponData }),
         items: {
           create: cart.items.map((item) => ({
             productId: item.productId,
             quantity: item.quantity,
-            price: item.product.price,
+            price: item.product.price, // Use DB price, not client price
           })),
         },
       },
@@ -182,9 +240,9 @@ export const createOrder = async (
       },
     });
 
-    // Increment coupon usage
-    if (couponId) {
-      await couponService.applyCoupon(couponId);
+    // Increment coupon usage if coupon was applied
+    if (totals.couponId) {
+      await couponService.applyCoupon(totals.couponId);
     }
 
     // Create initial tracking entry
