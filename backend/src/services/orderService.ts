@@ -7,6 +7,37 @@ import * as orderTrackingService from './orderTrackingService';
 import { OrderStatus } from '../validators/order';
 
 /**
+ * Canonical order status transition rules
+ * Enforces valid state machine transitions
+ */
+const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  pending: ['paid', 'cancelled', 'failed'],
+  paid: ['processing', 'cancelled', 'refunded'],
+  processing: ['shipped', 'cancelled', 'refunded'],
+  shipped: ['delivered'],
+  delivered: ['refunded'],
+  cancelled: [], // terminal state
+  refunded: [], // terminal state
+  failed: ['cancelled'],
+};
+
+/**
+ * Validates if a status transition is allowed
+ * @param fromStatus - Current order status
+ * @param toStatus - Desired new status
+ * @returns true if transition is valid, false otherwise
+ */
+const isValidOrderTransition = (fromStatus: OrderStatus, toStatus: OrderStatus): boolean => {
+  // Allow transitions to same status (idempotent updates)
+  if (fromStatus === toStatus) {
+    return true;
+  }
+
+  const allowedTransitions = VALID_TRANSITIONS[fromStatus];
+  return allowedTransitions.includes(toStatus);
+};
+
+/**
  * Calculate shipping fee
  */
 const calculateShipping = (subtotal: number): number => {
@@ -328,6 +359,7 @@ export const getAllOrders = async (options: {
 
 /**
  * Update order status (Admin only)
+ * Enforces state machine transitions
  */
 export const updateOrderStatus = async (orderId: string, status: OrderStatus) => {
   const validStatuses: OrderStatus[] = ['pending', 'paid', 'processing', 'shipped', 'delivered', 'cancelled', 'refunded', 'failed'];
@@ -342,6 +374,14 @@ export const updateOrderStatus = async (orderId: string, status: OrderStatus) =>
 
   if (!order) {
     throw new AppError('Order not found', 404);
+  }
+
+  // Enforce state machine transition rules
+  if (!isValidOrderTransition(order.status as OrderStatus, status)) {
+    throw new AppError(
+      `Invalid status transition: cannot move from "${order.status}" to "${status}"`,
+      400
+    );
   }
 
   const updatedOrder = await prisma.order.update({
@@ -377,6 +417,7 @@ export const updateOrderStatus = async (orderId: string, status: OrderStatus) =>
 /**
  * Cancel order
  * Restores stock when order is cancelled
+ * Enforces state machine transitions
  */
 export const cancelOrder = async (orderId: string, userId: string) => {
   return await prisma.$transaction(async (tx) => {
@@ -393,12 +434,18 @@ export const cancelOrder = async (orderId: string, userId: string) => {
       throw new AppError('Unauthorized to cancel this order', 403);
     }
 
-    if (order.status === 'shipped' || order.status === 'delivered') {
-      throw new AppError('Cannot cancel order after it has been shipped', 400);
-    }
-
+    // Check if already cancelled
     if (order.status === 'cancelled') {
       throw new AppError('Order is already cancelled', 400);
+    }
+
+    // Enforce state machine transition rules
+    const currentStatus = order.status as OrderStatus;
+    if (!isValidOrderTransition(currentStatus, 'cancelled')) {
+      throw new AppError(
+        `Cannot cancel order: invalid transition from "${order.status}" to "cancelled"`,
+        400
+      );
     }
 
     // Update order status to cancelled
@@ -435,6 +482,7 @@ export const cancelOrder = async (orderId: string, userId: string) => {
 /**
  * Refund order (Admin only)
  * Restores stock when order is refunded
+ * Enforces state machine transitions
  */
 export const refundOrder = async (orderId: string, refundAmount?: number) => {
   return await prisma.$transaction(async (tx) => {
@@ -447,8 +495,13 @@ export const refundOrder = async (orderId: string, refundAmount?: number) => {
       throw new AppError('Order not found', 404);
     }
 
-    if (order.status !== 'paid' && order.status !== 'delivered') {
-      throw new AppError('Order cannot be refunded in current status', 400);
+    // Enforce state machine transition rules
+    const currentStatus = order.status as OrderStatus;
+    if (!isValidOrderTransition(currentStatus, 'refunded')) {
+      throw new AppError(
+        `Cannot refund order: invalid transition from "${order.status}" to "refunded"`,
+        400
+      );
     }
 
     const finalRefundAmount = refundAmount || order.total;

@@ -3,6 +3,37 @@ import { AppError } from '../middleware/errorHandler';
 import { OrderStatus } from '../validators/order';
 
 /**
+ * Canonical order status transition rules
+ * Enforces valid state machine transitions
+ */
+const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
+  pending: ['paid', 'cancelled', 'failed'],
+  paid: ['processing', 'cancelled', 'refunded'],
+  processing: ['shipped', 'cancelled', 'refunded'],
+  shipped: ['delivered'],
+  delivered: ['refunded'],
+  cancelled: [], // terminal state
+  refunded: [], // terminal state
+  failed: ['cancelled'],
+};
+
+/**
+ * Validates if a status transition is allowed
+ * @param fromStatus - Current order status
+ * @param toStatus - Desired new status
+ * @returns true if transition is valid, false otherwise
+ */
+const isValidOrderTransition = (fromStatus: OrderStatus, toStatus: OrderStatus): boolean => {
+  // Allow transitions to same status (idempotent updates)
+  if (fromStatus === toStatus) {
+    return true;
+  }
+
+  const allowedTransitions = VALID_TRANSITIONS[fromStatus];
+  return allowedTransitions.includes(toStatus);
+};
+
+/**
  * Get order tracking history
  */
 export const getOrderTracking = async (orderId: string, userId?: string) => {
@@ -58,6 +89,15 @@ export const addTrackingUpdate = async (trackingData: {
 
   if (!order) {
     throw new AppError('Order not found', 404);
+  }
+
+  // Enforce state machine transition rules
+  const currentStatus = order.status as OrderStatus;
+  if (!isValidOrderTransition(currentStatus, trackingData.status)) {
+    throw new AppError(
+      `Invalid status transition: cannot move from "${order.status}" to "${trackingData.status}"`,
+      400
+    );
   }
 
   // Create tracking entry
@@ -138,7 +178,7 @@ export const getOrdersByStatus = async (status: OrderStatus) => {
 
 /**
  * Bulk update order status (Admin)
- * Validates each status before updating
+ * Validates each status transition before updating
  */
 export const bulkUpdateOrderStatus = async (
   updates: Array<{
@@ -168,6 +208,29 @@ export const bulkUpdateOrderStatus = async (
             success: false,
             orderId: update.orderId,
             error: `Invalid status: ${update.status}`,
+          };
+        }
+
+        // Fetch current order status to validate transition
+        const order = await prisma.order.findUnique({
+          where: { id: update.orderId },
+        });
+
+        if (!order) {
+          return {
+            success: false,
+            orderId: update.orderId,
+            error: 'Order not found',
+          };
+        }
+
+        // Validate transition
+        const currentStatus = order.status as OrderStatus;
+        if (!isValidOrderTransition(currentStatus, update.status)) {
+          return {
+            success: false,
+            orderId: update.orderId,
+            error: `Invalid transition from "${order.status}" to "${update.status}"`,
           };
         }
 
