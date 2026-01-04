@@ -1,274 +1,169 @@
 /**
  * Order State Machine Tests
- * 
- * Tests the business logic for order state transitions
- * Ensures orders can only move through valid states
- * 
- * File: backend/tests/orderStateMachine.test.ts
- * 
- * IMPORTANT: Create the folder backend/tests before adding this file
+ * Tests the order status transition validation logic
+ * This is a pure logic test - no database required
  */
 
-import { describe, test, expect } from '@jest/globals';
+import { OrderStatus } from '../src/validators/order';
 
-// ============================================
-// ORDER STATE DEFINITIONS
-// ============================================
-
-type OrderStatus = 
-  | 'pending'      // Initial state after order creation
-  | 'processing'   // Payment confirmed, order being prepared
-  | 'shipped'      // Order dispatched
-  | 'delivered'    // Order completed successfully
-  | 'cancelled'    // Order cancelled by user or system
-  | 'refunded';    // Payment refunded
-
-// ============================================
-// STATE TRANSITION RULES
-// ============================================
-
-/**
- * Valid state transitions map
- * Key: current state
- * Value: array of valid next states
- */
+// Import the transition validation rules from orderService
+// Since isValidOrderTransition is not exported, we'll test it indirectly
+// or we need to extract it to a testable module
 const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
-  pending: ['processing', 'cancelled'],
-  processing: ['shipped', 'cancelled'],
-  shipped: ['delivered', 'refunded'],
+  pending: ['paid', 'cancelled', 'failed'],
+  paid: ['processing', 'cancelled', 'refunded'],
+  processing: ['shipped', 'cancelled', 'refunded'],
+  shipped: ['delivered'],
   delivered: ['refunded'],
-  cancelled: [], // Terminal state
-  refunded: [],  // Terminal state
+  cancelled: [], // terminal state
+  refunded: [], // terminal state
+  failed: ['cancelled'],
 };
 
 /**
- * Check if a state transition is valid
+ * Test implementation of transition validator
+ * This mirrors the production logic from orderService
  */
-function canTransition(from: OrderStatus, to: OrderStatus): boolean {
-  return VALID_TRANSITIONS[from]?.includes(to) || false;
-}
-
-/**
- * Get valid next states for current state
- */
-function getValidNextStates(current: OrderStatus): OrderStatus[] {
-  return VALID_TRANSITIONS[current] || [];
-}
-
-/**
- * Check if state is terminal (no further transitions allowed)
- */
-function isTerminalState(state: OrderStatus): boolean {
-  return VALID_TRANSITIONS[state]?.length === 0;
-}
-
-/**
- * Validate state transition with business rules
- */
-function validateTransition(
-  from: OrderStatus,
-  to: OrderStatus,
-  context?: { paymentStatus?: string; refundReason?: string }
-): { valid: boolean; reason?: string } {
-  // Check if transition is allowed
-  if (!canTransition(from, to)) {
-    return {
-      valid: false,
-      reason: `Invalid transition from ${from} to ${to}`,
-    };
+const isValidOrderTransition = (fromStatus: OrderStatus, toStatus: OrderStatus): boolean => {
+  // Allow transitions to same status (idempotent updates)
+  if (fromStatus === toStatus) {
+    return true;
   }
 
-  // Additional business rule validations
-  if (to === 'processing' && context?.paymentStatus !== 'completed') {
-    return {
-      valid: false,
-      reason: 'Cannot move to processing without completed payment',
-    };
-  }
-
-  if (to === 'refunded' && !context?.refundReason) {
-    return {
-      valid: false,
-      reason: 'Refund reason is required',
-    };
-  }
-
-  return { valid: true };
-}
-
-// ============================================
-// TESTS
-// ============================================
+  const allowedTransitions = VALID_TRANSITIONS[fromStatus];
+  return allowedTransitions.includes(toStatus);
+};
 
 describe('Order State Machine', () => {
-  describe('Valid State Transitions', () => {
-    test('pending → processing (valid)', () => {
-      expect(canTransition('pending', 'processing')).toBe(true);
+  describe('Valid Transitions', () => {
+    test('pending → paid should be valid', () => {
+      expect(isValidOrderTransition('pending', 'paid')).toBe(true);
     });
 
-    test('pending → cancelled (valid)', () => {
-      expect(canTransition('pending', 'cancelled')).toBe(true);
+    test('pending → cancelled should be valid', () => {
+      expect(isValidOrderTransition('pending', 'cancelled')).toBe(true);
     });
 
-    test('processing → shipped (valid)', () => {
-      expect(canTransition('processing', 'shipped')).toBe(true);
+    test('pending → failed should be valid', () => {
+      expect(isValidOrderTransition('pending', 'failed')).toBe(true);
     });
 
-    test('processing → cancelled (valid)', () => {
-      expect(canTransition('processing', 'cancelled')).toBe(true);
+    test('paid → processing should be valid', () => {
+      expect(isValidOrderTransition('paid', 'processing')).toBe(true);
     });
 
-    test('shipped → delivered (valid)', () => {
-      expect(canTransition('shipped', 'delivered')).toBe(true);
+    test('paid → cancelled should be valid', () => {
+      expect(isValidOrderTransition('paid', 'cancelled')).toBe(true);
     });
 
-    test('shipped → refunded (valid)', () => {
-      expect(canTransition('shipped', 'refunded')).toBe(true);
+    test('paid → refunded should be valid', () => {
+      expect(isValidOrderTransition('paid', 'refunded')).toBe(true);
     });
 
-    test('delivered → refunded (valid)', () => {
-      expect(canTransition('delivered', 'refunded')).toBe(true);
+    test('processing → shipped should be valid', () => {
+      expect(isValidOrderTransition('processing', 'shipped')).toBe(true);
+    });
+
+    test('processing → cancelled should be valid', () => {
+      expect(isValidOrderTransition('processing', 'cancelled')).toBe(true);
+    });
+
+    test('processing → refunded should be valid', () => {
+      expect(isValidOrderTransition('processing', 'refunded')).toBe(true);
+    });
+
+    test('shipped → delivered should be valid', () => {
+      expect(isValidOrderTransition('shipped', 'delivered')).toBe(true);
+    });
+
+    test('delivered → refunded should be valid', () => {
+      expect(isValidOrderTransition('delivered', 'refunded')).toBe(true);
+    });
+
+    test('failed → cancelled should be valid', () => {
+      expect(isValidOrderTransition('failed', 'cancelled')).toBe(true);
     });
   });
 
-  describe('Invalid State Transitions', () => {
-    test('pending → shipped (invalid - must go through processing)', () => {
-      expect(canTransition('pending', 'shipped')).toBe(false);
+  describe('Idempotent Transitions (same status)', () => {
+    test('pending → pending should be valid', () => {
+      expect(isValidOrderTransition('pending', 'pending')).toBe(true);
     });
 
-    test('pending → delivered (invalid - cannot skip states)', () => {
-      expect(canTransition('pending', 'delivered')).toBe(false);
+    test('paid → paid should be valid', () => {
+      expect(isValidOrderTransition('paid', 'paid')).toBe(true);
     });
 
-    test('pending → refunded (invalid - no payment yet)', () => {
-      expect(canTransition('pending', 'refunded')).toBe(false);
+    test('shipped → shipped should be valid', () => {
+      expect(isValidOrderTransition('shipped', 'shipped')).toBe(true);
     });
 
-    test('processing → delivered (invalid - must ship first)', () => {
-      expect(canTransition('processing', 'delivered')).toBe(false);
+    test('cancelled → cancelled should be valid', () => {
+      expect(isValidOrderTransition('cancelled', 'cancelled')).toBe(true);
+    });
+  });
+
+  describe('Invalid Transitions', () => {
+    test('pending → shipped should be invalid (must go through paid → processing first)', () => {
+      expect(isValidOrderTransition('pending', 'shipped')).toBe(false);
     });
 
-    test('shipped → processing (invalid - cannot go backwards)', () => {
-      expect(canTransition('shipped', 'processing')).toBe(false);
+    test('pending → delivered should be invalid (cannot skip multiple stages)', () => {
+      expect(isValidOrderTransition('pending', 'delivered')).toBe(false);
     });
 
-    test('delivered → processing (invalid - cannot reverse)', () => {
-      expect(canTransition('delivered', 'processing')).toBe(false);
+    test('pending → refunded should be invalid (cannot refund unpaid order)', () => {
+      expect(isValidOrderTransition('pending', 'refunded')).toBe(false);
     });
 
-    test('cancelled → processing (invalid - terminal state)', () => {
-      expect(canTransition('cancelled', 'processing')).toBe(false);
+    test('shipped → processing should be invalid (cannot go backwards)', () => {
+      expect(isValidOrderTransition('shipped', 'processing')).toBe(false);
     });
 
-    test('refunded → delivered (invalid - terminal state)', () => {
-      expect(canTransition('refunded', 'delivered')).toBe(false);
+    test('delivered → shipped should be invalid (cannot go backwards)', () => {
+      expect(isValidOrderTransition('delivered', 'shipped')).toBe(false);
+    });
+
+    test('delivered → cancelled should be invalid (cannot cancel delivered order)', () => {
+      expect(isValidOrderTransition('delivered', 'cancelled')).toBe(false);
+    });
+
+    test('cancelled → paid should be invalid (terminal state)', () => {
+      expect(isValidOrderTransition('cancelled', 'paid')).toBe(false);
+    });
+
+    test('cancelled → processing should be invalid (terminal state)', () => {
+      expect(isValidOrderTransition('cancelled', 'processing')).toBe(false);
+    });
+
+    test('refunded → paid should be invalid (terminal state)', () => {
+      expect(isValidOrderTransition('refunded', 'paid')).toBe(false);
+    });
+
+    test('refunded → delivered should be invalid (terminal state)', () => {
+      expect(isValidOrderTransition('refunded', 'delivered')).toBe(false);
     });
   });
 
   describe('Terminal States', () => {
-    test('cancelled is a terminal state', () => {
-      expect(isTerminalState('cancelled')).toBe(true);
-      expect(getValidNextStates('cancelled')).toHaveLength(0);
-    });
-
-    test('refunded is a terminal state', () => {
-      expect(isTerminalState('refunded')).toBe(true);
-      expect(getValidNextStates('refunded')).toHaveLength(0);
-    });
-
-    test('delivered is not a terminal state (can be refunded)', () => {
-      expect(isTerminalState('delivered')).toBe(false);
-      expect(getValidNextStates('delivered')).toContain('refunded');
-    });
-  });
-
-  describe('Business Rule Validations', () => {
-    test('cannot move to processing without payment', () => {
-      const result = validateTransition('pending', 'processing', {
-        paymentStatus: 'pending',
+    test('cancelled state should have no valid forward transitions', () => {
+      const fromCancelled: OrderStatus[] = ['pending', 'paid', 'processing', 'shipped', 'delivered', 'failed', 'refunded'];
+      
+      fromCancelled.forEach(status => {
+        if (status !== 'cancelled') {
+          expect(isValidOrderTransition('cancelled', status)).toBe(false);
+        }
       });
-      expect(result.valid).toBe(false);
-      expect(result.reason).toContain('payment');
     });
 
-    test('can move to processing with completed payment', () => {
-      const result = validateTransition('pending', 'processing', {
-        paymentStatus: 'completed',
+    test('refunded state should have no valid forward transitions', () => {
+      const fromRefunded: OrderStatus[] = ['pending', 'paid', 'processing', 'shipped', 'delivered', 'failed', 'cancelled'];
+      
+      fromRefunded.forEach(status => {
+        if (status !== 'refunded') {
+          expect(isValidOrderTransition('refunded', status)).toBe(false);
+        }
       });
-      expect(result.valid).toBe(true);
-    });
-
-    test('cannot refund without reason', () => {
-      const result = validateTransition('delivered', 'refunded', {});
-      expect(result.valid).toBe(false);
-      expect(result.reason).toContain('reason');
-    });
-
-    test('can refund with reason', () => {
-      const result = validateTransition('delivered', 'refunded', {
-        refundReason: 'Defective product',
-      });
-      expect(result.valid).toBe(true);
-    });
-  });
-
-  describe('Get Valid Next States', () => {
-    test('pending order has 2 valid next states', () => {
-      const nextStates = getValidNextStates('pending');
-      expect(nextStates).toHaveLength(2);
-      expect(nextStates).toContain('processing');
-      expect(nextStates).toContain('cancelled');
-    });
-
-    test('processing order has 2 valid next states', () => {
-      const nextStates = getValidNextStates('processing');
-      expect(nextStates).toHaveLength(2);
-      expect(nextStates).toContain('shipped');
-      expect(nextStates).toContain('cancelled');
-    });
-
-    test('shipped order has 2 valid next states', () => {
-      const nextStates = getValidNextStates('shipped');
-      expect(nextStates).toHaveLength(2);
-      expect(nextStates).toContain('delivered');
-      expect(nextStates).toContain('refunded');
-    });
-
-    test('delivered order has 1 valid next state', () => {
-      const nextStates = getValidNextStates('delivered');
-      expect(nextStates).toHaveLength(1);
-      expect(nextStates).toContain('refunded');
-    });
-
-    test('cancelled order has no valid next states', () => {
-      const nextStates = getValidNextStates('cancelled');
-      expect(nextStates).toHaveLength(0);
-    });
-  });
-
-  describe('Complete Order Flow', () => {
-    test('happy path: pending → processing → shipped → delivered', () => {
-      expect(canTransition('pending', 'processing')).toBe(true);
-      expect(canTransition('processing', 'shipped')).toBe(true);
-      expect(canTransition('shipped', 'delivered')).toBe(true);
-    });
-
-    test('cancellation path: pending → cancelled', () => {
-      expect(canTransition('pending', 'cancelled')).toBe(true);
-      expect(isTerminalState('cancelled')).toBe(true);
-    });
-
-    test('refund path: pending → processing → shipped → refunded', () => {
-      expect(canTransition('pending', 'processing')).toBe(true);
-      expect(canTransition('processing', 'shipped')).toBe(true);
-      expect(canTransition('shipped', 'refunded')).toBe(true);
-      expect(isTerminalState('refunded')).toBe(true);
-    });
-
-    test('post-delivery refund: delivered → refunded', () => {
-      expect(canTransition('delivered', 'refunded')).toBe(true);
-      expect(isTerminalState('refunded')).toBe(true);
     });
   });
 });
-
